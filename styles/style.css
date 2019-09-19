@@ -33,7 +33,7 @@ h3 {
 }
 
 #change-user {
-  position: fixed;
+  position: absolute;
   right: 30px;
   top: 65px;
 }

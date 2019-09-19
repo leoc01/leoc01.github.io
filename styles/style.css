@@ -1,24 +1,49 @@
 html {
   font-size: 10px;
   font-family: "Montserrat", sans-serif;
-  background-color: #009999;
+  background-color: #5c5c5c;
 }
 
 body {
-  width: 600px;
+  width: "device-width";
   margin: 0 auto;
   background-color: #ff9500;
-  padding: 0 20px 20px 20px;
-  border: 3px solid black;
+  padding: 0 auto;
+}
+
+#top {
+  width: 100%;
+  height: 100px;
+  background-color: black;
 }
 
 h1 {
-  font-size: 60px;
-  text-align: center;
-  margin: 0;
-  padding: 20px 0;    
-  color: #00539F;
-  text-shadow: 2px 2px 5px black;
+  font-size: 12px;
+  text-align: left;
+  color: rgb(255, 255, 255);
+  padding: 0px 0px 0px 10px;
+}
+
+h3 {
+  font-size: 40px;
+  color: rgb(255, 255, 255);
+  padding: 10px 10px 0px 10px;
+  margin-block-start: 0;
+  margin-block-end: 0;
+}
+
+#change-user {
+  position: fixed;
+  right: 30px;
+  top: 65px;
+}
+
+#principal-img {
+  margin: 10px 10px 10px 10px;
+}
+
+#inter {
+  margin: 10px 10px 10px 10px;
 }
 
 p,

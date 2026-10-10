@@ -1,6 +1,7 @@
 // voo.js - pagina do jogo: gera o mundo (Web Workers), liga GPU, teclado, controle e som.
 import { instantiate } from './wasm.js';
 import { Renderer } from './renderer.js';
+import { buildGraph, NSRC, OUT_CHANNELS } from './spatial.js';
 
 const SEED = 2026;
 const $ = (id) => document.getElementById(id);
@@ -71,33 +72,46 @@ async function generateWorld(module, w) {
 }
 
 // ---------- som ----------
+// O C gera uma faixa por fonte (motor, helice, vento, rodas, buzina, flaps, cliques, impacto)
+// ja com distancia, atraso/Doppler, reflexo no chao e cabine; aqui cada faixa passa por um
+// panner (HRTF em "fones 3D") na direcao da fonte em relacao a camera (ver spatial.js).
 class Sound {
-  constructor(w) { this.w = w; this.ctx = null; }
+  constructor(w) { this.w = w; this.ctx = null; this.mode = -1; }
   async start() {
     if (this.ctx) { this.ctx.resume(); return; }
     const rate = this.w.voo_audio_rate();
     try {
       this.ctx = new AudioContext({ sampleRate: rate, latencyHint: 'interactive' });
       await this.ctx.audioWorklet.addModule('./audio-worklet.js');
-      this.node = new AudioWorkletNode(this.ctx, 'voo-audio', { outputChannelCount: [2] });
-      this.node.connect(this.ctx.destination);
+      this.node = new AudioWorkletNode(this.ctx, 'voo-audio', {
+        numberOfInputs: 0, numberOfOutputs: NSRC, outputChannelCount: OUT_CHANNELS,
+      });
+      this.g = buildGraph(this.ctx, (s, dst) => this.node.connect(dst, s));
+      this.nch = this.w.voo_audio_nch();
       this.rate = this.ctx.sampleRate;
       this.sent = 0;
       this.t0 = this.ctx.currentTime;
     } catch (e) { console.warn('som indisponivel', e); this.ctx = null; }
   }
-  pump() {
+  // info: vetor de estado do quadro (modo de som em [66], cabine em [17])
+  pump(info) {
     if (!this.ctx || !this.node) return;
+    const mode = info[66] | 0, cabin = info[17] > 0 ? 1 : 0;   /* le antes: a memoria do wasm pode crescer */
+    if (mode !== this.mode) { this.mode = mode; if (mode > 0) this.g.setMode(mode); }
     const played = (this.ctx.currentTime - this.t0) * this.rate;
     if (this.sent < played) this.sent = played;   /* aba ficou parada: nao acumula atraso */
+    const n = 512;
     while (this.sent - played < 0.10 * this.rate) {
-      const n = 512;
       const p = this.w.voo_audio(n);
-      const buf = new Float32Array(n);
-      buf.set(new Float32Array(this.w.memory.buffer, p, n));
-      this.node.port.postMessage(buf, [buf.buffer]);
+      const data = new Float32Array(this.nch * n);
+      data.set(new Float32Array(this.w.memory.buffer, p, this.nch * n));
+      this.node.port.postMessage({ n, data }, [data.buffer]);
+      // a posicao vale para quando este bloco tocar
+      const when = this.t0 + this.sent / this.rate;
+      this.g.setPositions(new Float32Array(this.w.memory.buffer, this.w.voo_audio_pos(), NSRC * 3), Math.max(when, this.ctx.currentTime));
       this.sent += n;
     }
+    this.g.setCabin(cabin, this.ctx.currentTime);
   }
 }
 
@@ -217,7 +231,7 @@ async function main() {
     const fx = new Float32Array(w.memory.buffer, w.voo_fx(), nfx * 8);
     const cells = new Uint32Array(w.memory.buffer, cp, cols * rows * 3);
     renderer.frame({ info: I, points, npts, fx, nfx, cells, cols, rows, vrows: vrowsPrev, iw, ih, smooth });
-    sound.pump();
+    sound.pump(I);
 
     fpsN++;
     if (t - fpsT >= 0.5) { w.voo_set_fps(fpsN / (t - fpsT)); fpsN = 0; fpsT = t; }

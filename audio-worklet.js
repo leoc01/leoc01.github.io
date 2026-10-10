@@ -1,4 +1,9 @@
-// audio-worklet.js - toca os blocos de som que o jogo sintetiza (em C) na thread principal
+// audio-worklet.js - toca as faixas que o jogo sintetiza (em C) na thread principal.
+// Cada fonte sai numa saida propria (o vento em estereo) para ser espacializada
+// separadamente; os blocos chegam planares: canal * n + i.
+const NOUT = 8;
+const CH_OF_OUT = [[0], [1], [2, 3], [4], [5], [6], [7], [8]];
+
 class VooAudio extends AudioWorkletProcessor {
   constructor() {
     super();
@@ -7,18 +12,26 @@ class VooAudio extends AudioWorkletProcessor {
     this.port.onmessage = (e) => this.q.push(e.data);
   }
   process(inputs, outputs) {
-    const out = outputs[0][0];
+    const len = outputs[0][0].length;
     let i = 0;
-    while (i < out.length) {
-      if (!this.q.length) { out.fill(0, i); break; }
+    while (i < len) {
+      if (!this.q.length) {
+        for (let o = 0; o < NOUT; o++) for (const ch of outputs[o]) ch.fill(0, i);
+        break;
+      }
       const b = this.q[0];
-      const n = Math.min(out.length - i, b.length - this.off);
-      out.set(b.subarray(this.off, this.off + n), i);
+      const n = Math.min(len - i, b.n - this.off);
+      for (let o = 0; o < NOUT; o++) {
+        const src = CH_OF_OUT[o];
+        for (let c = 0; c < outputs[o].length; c++) {
+          const k = src[Math.min(c, src.length - 1)];
+          outputs[o][c].set(b.data.subarray(k * b.n + this.off, k * b.n + this.off + n), i);
+        }
+      }
       i += n;
       this.off += n;
-      if (this.off >= b.length) { this.q.shift(); this.off = 0; }
+      if (this.off >= b.n) { this.q.shift(); this.off = 0; }
     }
-    for (let c = 1; c < outputs[0].length; c++) outputs[0][c].set(out);
     return true;
   }
 }

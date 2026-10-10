@@ -39,6 +39,10 @@ uniform float uProp;
 uniform vec4 uPB[66];      // caixas do aviao: 3 vec4 por caixa
 uniform int uNPB;
 uniform vec3 uPal[6];      // ceu topo, ceu horizonte, nevoa, luz, sombra, sol
+uniform vec4 uCk[96];      // interior da cabine: 4 vec4 por paralelogramo (O+modo, U+densidade, V, uv ou cor)
+uniform int uCkN;
+uniform sampler2D uCkTex;  // atlas do painel (ver cockpit.js)
+uniform float uCkLight;
 
 in vec2 vUV;
 layout(location = 0) out vec4 oColor;
@@ -493,10 +497,52 @@ vec3 shadeWater(vec3 p, vec3 rd, float t) {
     return body;
 }
 
+// ---------- interior da cabine: paralelogramos presos ao aviao ----------
+bool cockpitHit(vec3 ro, vec3 rd, out float tOut, out vec3 col) {
+    vec3 d0 = vec3(wrapf(ro.x - uPPos.x), wrapf(ro.y - uPPos.y), ro.z - uPPos.z);
+    vec3 rb = vec3(dot(d0, uPF), dot(d0, uPR), dot(d0, uPU));
+    vec3 db = vec3(dot(rd, uPF), dot(rd, uPR), dot(rd, uPU));
+    float best = 1e9; int bi = -1; vec2 ab = vec2(0.0); vec3 bn = vec3(1.0, 0.0, 0.0);
+    for (int i = 0; i < 24; i++) {
+        if (i >= uCkN) break;
+        vec4 q0 = uCk[i * 4], q1 = uCk[i * 4 + 1], q2 = uCk[i * 4 + 2], q3 = uCk[i * 4 + 3];
+        vec3 N = cross(q1.xyz, q2.xyz);
+        float den = dot(db, N);
+        if (abs(den) < 1e-9) continue;
+        float t = dot(q0.xyz - rb, N) / den;
+        if (t <= 0.0 || t >= best) continue;
+        vec3 pq = rb + db * t - q0.xyz;
+        float nn = dot(N, N);
+        float a = dot(cross(pq, q2.xyz), N) / nn, b = dot(cross(q1.xyz, pq), N) / nn;
+        if (a < 0.0 || a > 1.0 || b < 0.0 || b > 1.0) continue;
+        if (q0.w > 1.5 && textureLod(uCkTex, q3.xy + vec2(a, 1.0 - b) * q3.zw, 0.0).a < 0.5) continue;   // recorte (manche)
+        best = t; bi = i; ab = vec2(a, b); bn = normalize(N);
+    }
+    if (bi < 0) return false;
+    vec4 q0 = uCk[bi * 4], q1 = uCk[bi * 4 + 1], q3 = uCk[bi * 4 + 3];
+    if (q0.w < 0.5) col = q3.rgb;
+    else {
+        // nivel de mipmap pela distancia e pela inclinacao (sem derivadas dentro do laco)
+        float lod = log2(max(best * uPix * q1.w / max(abs(dot(db, bn)), 0.15), 1e-4));
+        col = textureLod(uCkTex, q3.xy + vec2(ab.x, 1.0 - ab.y) * q3.zw, lod).rgb;
+    }
+    col *= uCkLight;
+    tOut = best;
+    return true;
+}
+
 void main() {
     vec2 ndc = vUV * 2.0 - 1.0;
     vec3 rd = normalize(uCamF + uCamR * (ndc.x * uTanX) + uCamU * (ndc.y * uTanX * uHW));
     vec3 ro = uCamPos;
+    if (uCockpit == 1 && uCkN > 0) {
+        float tc; vec3 cc;
+        if (cockpitHit(ro, rd, tc, cc)) {   // o painel tapa tudo atras dele: nem marcha o terreno
+            oColor = vec4(cc, 1.0);
+            oG = vec4(tc, float(GK_PLANE), 0.0, 0.0);
+            return;
+        }
+    }
     float th; int box; vec3 bn;
     int hit = march(ro, rd, uViewDist, th, box, bn);
     float tp; vec3 pn, pc;

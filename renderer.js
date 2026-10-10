@@ -1,6 +1,7 @@
 // renderer.js - WebGL2: dados do mundo viram texturas, o shader faz o raymarching,
 // uma passada desenha contornos/costa, outra os pontos da pista, e por cima
 // vai a grade de celulas do painel e do menu (mesmo codigo C do terminal).
+import { Cockpit } from './cockpit.js';
 import { QUAD_VS, SCENE_FS, POST_FS, POINTS_VS, POINTS_FS, BLIT_FS, CELLS_FS, FX_VS, FX_FS } from './shaders.js';
 
 const XTERM = (() => {
@@ -35,6 +36,7 @@ export class Renderer {
     gl.bindBuffer(gl.ARRAY_BUFFER, this.quad);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
     this.ptsBuf = gl.createBuffer();
+    this.cockpit = new Cockpit(gl);
     // explosao: um quad por particula (instanciado), atributos num VAO proprio
     this.progFx = this.program(FX_VS, FX_FS);
     this.fxBuf = gl.createBuffer();
@@ -271,6 +273,16 @@ export class Renderer {
     gl.uniform1f(u.uPix, 2 * I[12] / f.iw);
     gl.uniform4fv(u.uPB, this.planeBoxes);
     gl.uniform1i(u.uNPB, this.nPlaneBoxes);
+    // interior da cabine (so na camera de cabine)
+    if (I[17] > 0) {
+      const I2 = { kt: I[67], ft: I[68], hdg: I[69], pitch: I[70], roll: I[71], fpm: I[72], rpm: I[73], flaps: I[74],
+                   trim: I[75], turn: I[76], slip: I[77] };
+      this.cockpit.update(I2);
+      gl.uniform4fv(u.uCk, this.cockpit.build(I[78], I[79]));
+      gl.uniform1i(u.uCkN, this.cockpit.n);
+      gl.uniform1f(u.uCkLight, 0.62 + 0.38 * Math.min(1, Math.max(0, I[22] * 2.5)));
+    } else gl.uniform1i(u.uCkN, 0);
+    this.bindTex(p, 'uCkTex', 9, this.cockpit.tex);
     this.drawQuad(p);
 
     // 1b) explosao/fumaca do acidente, por cima da cor da cena (antes dos contornos)

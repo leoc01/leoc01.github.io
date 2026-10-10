@@ -63,10 +63,10 @@ function makeIR(ctx, kind) {
 // monta o grafo: connect(s, pannerOuGanho) liga a saida da fonte s na entrada dada
 export function buildGraph(ctx, connect, dest = ctx.destination) {
   const master = ctx.createGain();
-  master.gain.value = 0.9;
+  master.gain.value = 0.75;
   const lim = ctx.createDynamicsCompressor();
   lim.threshold.value = -9; lim.knee.value = 6; lim.ratio.value = 10;
-  lim.attack.value = 0.003; lim.release.value = 0.15;
+  lim.attack.value = 0.001; lim.release.value = 0.15;
   master.connect(lim);
   lim.connect(dest);
 
@@ -94,19 +94,26 @@ export function buildGraph(ctx, connect, dest = ctx.destination) {
       panningModel: 'HRTF', distanceModel: 'linear', rolloffFactor: 0,
       refDistance: 1, maxDistance: 100000, positionX: 0, positionY: 0, positionZ: -1,
     });
+    // balanco extra esquerda/direita: o HRTF quase nao separa os graves (o ronco do motor)
+    // entre os ouvidos; para o jogo, o lado tem que ser obvio
+    const bal = new StereoPannerNode(ctx, { pan: 0 });
     connect(s, p);
-    p.connect(master);
-    p.connect(send);
+    p.connect(bal);
+    bal.connect(master);
+    bal.connect(send);
+    p.bal = bal;
     panners.push(p);
   }
   const L = ctx.listener;
   if (L.forwardX) { L.forwardX.value = 0; L.forwardY.value = 0; L.forwardZ.value = -1; L.upX.value = 0; L.upY.value = 1; L.upZ.value = 0; }
   else L.setOrientation(0, 0, -1, 0, 1, 0);
 
+  let extra = 0.7;
   return {
     master, panners, sendOut, sendCab,
     setMode(mode) {   // 1 alto-falantes, 2 fones 3D
       const m = mode === 2 ? 'HRTF' : 'equalpower';
+      extra = mode === 2 ? 0.7 : 0.2;
       for (const p of panners) if (p && p.panningModel !== m) p.panningModel = m;
     },
     // pos: Float32Array NSRC*3 (x direita, y cima, -z frente), no instante 'when'
@@ -120,6 +127,7 @@ export function buildGraph(ctx, connect, dest = ctx.destination) {
         p.positionX.setTargetAtTime(x, when, tc);
         p.positionY.setTargetAtTime(y, when, tc);
         p.positionZ.setTargetAtTime(z, when, tc);
+        p.bal.pan.setTargetAtTime(Math.max(-1, Math.min(1, x * extra)), when, tc * 2);
       }
     },
     setCabin(k, when) {

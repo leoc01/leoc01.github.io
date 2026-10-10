@@ -680,3 +680,89 @@ void main() {
     if (col.a <= 0.0) discard;
     oColor = vec4(col.rgb * col.a, col.a);
 }`;
+
+// ---------------------------------------------------------------------------
+// explosao do acidente: cada particula e um balao de desenho animado virado
+// para a camera, com teste de profundidade suave contra a cena (G-buffer)
+// ---------------------------------------------------------------------------
+export const FX_VS = `#version 300 es
+in vec4 aP;   // x y z raio
+in vec4 aQ;   // idade(0..1) tipo semente -
+uniform vec3 uCamPos, uCamF, uCamR, uCamU;
+uniform float uTanX, uHW;
+out vec2 vC;
+out vec4 vQ;
+out float vDist, vR;
+const float WORLD = 16384.0;
+float wrapf(float d) { return d - WORLD * floor(d / WORLD + 0.5); }
+void main() {
+    vec2 c = vec2(float(gl_VertexID & 1), float(gl_VertexID >> 1)) * 2.0 - 1.0;
+    vec3 d = aP.xyz - uCamPos;
+    d.x = wrapf(d.x); d.y = wrapf(d.y);
+    float r = aP.w, z = dot(d, uCamF);
+    vC = c * 1.15; vQ = aQ; vR = r; vDist = length(d);
+    if (z < 0.3) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
+    float zz = max(z, r * 0.7);
+    vec2 s = vec2(dot(d, uCamR) / (zz * uTanX), dot(d, uCamU) / (zz * uTanX * uHW));
+    vec2 rad = vec2(r / (zz * uTanX), r / (zz * uTanX * uHW)) * 1.15;
+    gl_Position = vec4(s + c * rad, 0.0, 1.0);
+}`;
+export const FX_FS = `#version 300 es
+precision highp float;
+precision highp sampler2D;
+uniform sampler2D uG;
+uniform vec3 uSun, uCamF, uCamR, uCamU, uLight, uShade;
+in vec2 vC;
+in vec4 vQ;
+in float vDist, vR;
+out vec4 oColor;
+const int FLASH = 0, FIRE = 1, SPARK = 2, SMOKE = 3, STEAM = 4, SPRAY = 5;
+void main() {
+    float age = vQ.x, seed = vQ.z;
+    int kind = int(vQ.y + 0.5);
+    // contorno "fofo": o raio varia um pouco com o angulo
+    float ang = atan(vC.y, vC.x);
+    float wob = kind == SPARK ? 1.0 : 1.0 + 0.07 * sin(ang * 5.0 + seed * 40.0) + 0.04 * sin(ang * 9.0 - seed * 23.0);
+    float rr = length(vC) / wob;
+    if (rr > 1.0) discard;
+    float nz = sqrt(max(0.0, 1.0 - rr * rr));
+    // profundidade da superficie do balao e teste suave contra a cena
+    float depth = vDist - vR * nz;
+    float sceneT = texelFetch(uG, ivec2(gl_FragCoord.xy), 0).x;
+    float soft = clamp((sceneT - depth) / (0.35 * vR + 0.3), 0.0, 1.0);
+    if (soft <= 0.0) discard;
+    float fw = max(fwidth(rr), 1e-3);
+    vec3 col; float a, add = 0.0;
+    if (kind == FLASH) {
+        col = rr < 0.55 ? vec3(1.0, 1.0, 0.86) : vec3(1.0, 0.62, 0.22);
+        a = (1.0 - age) * (1.0 - age);
+        add = 0.5;
+    } else if (kind == FIRE) {
+        // tres faixas: miolo amarelo, meio laranja, borda vermelha; esfria com a idade
+        float b = rr + 0.3 * age;
+        vec3 hot = vec3(1.0, 0.93, 0.55), orng = vec3(1.0, 0.50, 0.09), red = vec3(0.88, 0.12, 0.05), soot = vec3(0.22, 0.12, 0.10);
+        if (b < 0.45) col = mix(hot, orng, smoothstep(0.3, 0.7, age));
+        else if (b < 0.78) col = mix(orng, red, smoothstep(0.15, 0.55, age));
+        else col = mix(red, soot, smoothstep(0.35, 0.85, age));
+        a = 1.0 - smoothstep(0.7, 1.0, age);
+        add = 0.25 * (1.0 - age);
+    } else if (kind == SPARK) {
+        col = mix(vec3(1.0, 0.92, 0.55), vec3(1.0, 0.42, 0.08), age);
+        a = 1.0 - smoothstep(0.6, 1.0, age);
+        add = 0.3;
+    } else {
+        // fumaca, vapor e respingos: iluminados em faixas, como o resto do mundo
+        vec3 n = normalize(uCamR * (vC.x / wob) + uCamU * (vC.y / wob) - uCamF * nz);
+        float band = dot(n, uSun) > 0.1 ? 1.0 : 0.0;
+        vec3 base = kind == SMOKE ? vec3(mix(0.16, 0.42, smoothstep(0.0, 0.7, age))) : vec3(0.95, 0.96, 0.98);
+        vec3 shade = mix(uShade, vec3(dot(uShade, vec3(0.333))), 0.6);   // sombra menos azulada
+        col = base * mix(shade, uLight, band) * (kind == SMOKE ? 1.25 : 1.0);
+        if (kind == SMOKE) col += vec3(0.55, 0.14, 0.03) * (1.0 - smoothstep(0.0, 0.2, age)) * (1.0 - rr);  // brasa por baixo
+        if (kind == SPRAY) a = 1.0 - smoothstep(0.6, 1.0, age);
+        else a = (1.0 - smoothstep(0.45, 1.0, age)) * smoothstep(0.0, 0.06, age) * (kind == SMOKE ? 0.94 : 0.8);
+    }
+    // contorno de desenho; some junto quando o balao fica transparente (sem aneis sobrepostos)
+    if (kind != FLASH && kind != SPARK && rr > 1.0 - 1.8 * fw) col *= mix(1.0, 0.5, smoothstep(0.35, 0.8, a));
+    a *= (1.0 - smoothstep(1.0 - fw, 1.0, rr)) * soft;
+    oColor = vec4(col * a, a * (1.0 - add));
+}`;

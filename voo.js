@@ -5,6 +5,7 @@ import { Renderer } from './renderer.js';
 const SEED = 2026;
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
+const DT_FIXO = parseFloat(params.get('dtfixo') || '0');
 
 // codigos de tecla iguais aos de src/input.h
 const KEY_UP = 256, KEY_DOWN = 257, KEY_LEFT = 258, KEY_RIGHT = 259, KEY_ESC = 261, KEY_ENTER = 262;
@@ -182,7 +183,7 @@ async function main() {
     const lim = info()[62] || 0;
     if (lim > 0 && t - last < 1 / lim - 0.002) return;
     last = t;
-    const dt = Math.min(0.1, t - tPrev);
+    const dt = DT_FIXO > 0 ? DT_FIXO : Math.min(0.1, t - tPrev);   /* ?dtfixo=0.05: testes quadro a quadro */
     tPrev = t;
     pollPad();
 
@@ -212,8 +213,10 @@ async function main() {
     if ((I[63] | 0) !== sunVersion) { sunVersion = I[63] | 0; renderer.uploadShadows(w); }
     const npts = w.voo_npoints();
     const points = new Float32Array(w.memory.buffer, w.voo_points(), npts * 7);
+    const nfx = w.voo_nfx();
+    const fx = new Float32Array(w.memory.buffer, w.voo_fx(), nfx * 8);
     const cells = new Uint32Array(w.memory.buffer, cp, cols * rows * 3);
-    renderer.frame({ info: I, points, npts, cells, cols, rows, vrows: vrowsPrev, iw, ih, smooth });
+    renderer.frame({ info: I, points, npts, fx, nfx, cells, cols, rows, vrows: vrowsPrev, iw, ih, smooth });
     sound.pump();
 
     fpsN++;

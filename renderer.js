@@ -1,7 +1,7 @@
 // renderer.js - WebGL2: dados do mundo viram texturas, o shader faz o raymarching,
 // uma passada desenha contornos/costa/retro, outra os pontos da pista, e por cima
 // vai a grade de celulas do painel e do menu (mesmo codigo C do terminal).
-import { QUAD_VS, SCENE_FS, POST_FS, POINTS_VS, POINTS_FS, BLIT_FS, CELLS_FS } from './shaders.js';
+import { QUAD_VS, SCENE_FS, POST_FS, POINTS_VS, POINTS_FS, BLIT_FS, CELLS_FS, FX_VS, FX_FS } from './shaders.js';
 
 const XTERM = (() => {
   const p = [[0,0,0],[128,0,0],[0,128,0],[128,128,0],[0,0,128],[128,0,128],[0,128,128],[192,192,192],
@@ -35,6 +35,16 @@ export class Renderer {
     gl.bindBuffer(gl.ARRAY_BUFFER, this.quad);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
     this.ptsBuf = gl.createBuffer();
+    // explosao: um quad por particula (instanciado), atributos num VAO proprio
+    this.progFx = this.program(FX_VS, FX_FS);
+    this.fxBuf = gl.createBuffer();
+    this.fxVao = gl.createVertexArray();
+    gl.bindVertexArray(this.fxVao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.fxBuf);
+    const aP = gl.getAttribLocation(this.progFx, 'aP'), aQ = gl.getAttribLocation(this.progFx, 'aQ');
+    gl.enableVertexAttribArray(aP); gl.vertexAttribPointer(aP, 4, gl.FLOAT, false, 32, 0); gl.vertexAttribDivisor(aP, 1);
+    gl.enableVertexAttribArray(aQ); gl.vertexAttribPointer(aQ, 4, gl.FLOAT, false, 32, 16); gl.vertexAttribDivisor(aQ, 1);
+    gl.bindVertexArray(null);
     this.fb = null;
     this.initAtlas();
   }
@@ -169,7 +179,7 @@ export class Renderer {
     if (this.fb && this.fw === w && this.fh === h) return;
     if (this.fb) {
       for (const t of [this.tColor, this.tG, this.tPost]) gl.deleteTexture(t);
-      gl.deleteFramebuffer(this.fb); gl.deleteFramebuffer(this.fbPost);
+      gl.deleteFramebuffer(this.fb); gl.deleteFramebuffer(this.fbPost); gl.deleteFramebuffer(this.fbFx);
     }
     this.fw = w; this.fh = h;
     this.tColor = this.tex(w, h, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, null);
@@ -185,6 +195,9 @@ export class Renderer {
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.tColor, 0);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, this.tG, 0);
     gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
+    this.fbFx = gl.createFramebuffer();      // so a cor da cena: a explosao le a profundidade de tG
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbFx);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.tColor, 0);
     this.fbPost = gl.createFramebuffer();
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbPost);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.tPost, 0);
@@ -206,7 +219,7 @@ export class Renderer {
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
 
-  // f: { info, points, npts, cells, cols, rows, vrows, iw, ih, smooth }
+  // f: { info, points, npts, fx, nfx, cells, cols, rows, vrows, iw, ih, smooth }
   frame(f) {
     const gl = this.gl, I = f.info, W = this.canvas.width, H = this.canvas.height;
     const cellW = W / f.cols, cellH = H / f.rows;
@@ -259,6 +272,31 @@ export class Renderer {
     gl.uniform4fv(u.uPB, this.planeBoxes);
     gl.uniform1i(u.uNPB, this.nPlaneBoxes);
     this.drawQuad(p);
+
+    // 1b) explosao/fumaca do acidente, por cima da cor da cena (antes do retro)
+    if (f.nfx > 0) {
+      p = this.progFx;
+      gl.useProgram(p);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbFx);
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);   // alfa pre-multiplicado (fogo parcialmente aditivo)
+      this.bindTex(p, 'uG', 0, this.tG);
+      gl.uniform3f(p.u.uCamPos, I[0], I[1], I[2]);
+      gl.uniform3f(p.u.uCamF, I[3], I[4], I[5]);
+      gl.uniform3f(p.u.uCamR, I[6], I[7], I[8]);
+      gl.uniform3f(p.u.uCamU, I[9], I[10], I[11]);
+      gl.uniform1f(p.u.uTanX, I[12]);
+      gl.uniform1f(p.u.uHW, f.ih / f.iw);
+      gl.uniform3f(p.u.uSun, I[20], I[21], I[22]);
+      gl.uniform3f(p.u.uLight, I[49], I[50], I[51]);
+      gl.uniform3f(p.u.uShade, I[52], I[53], I[54]);
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.fxBuf);
+      gl.bufferData(gl.ARRAY_BUFFER, f.fx.subarray(0, f.nfx * 8), gl.STREAM_DRAW);
+      gl.bindVertexArray(this.fxVao);
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, f.nfx);
+      gl.bindVertexArray(null);
+      gl.disable(gl.BLEND);
+    }
 
     // 2) contornos, costa, retro
     p = this.progPost;

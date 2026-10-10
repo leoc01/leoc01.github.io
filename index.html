@@ -1,40 +1,47 @@
-<!DOCTYPE html>
-<html lang="pt">
-  <head>
-    <title>leoc01</title>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta http-equiv="X-UA-Compatible" content="ie=edge" />
-    <link href="styles/style.css" rel="stylesheet" />
-    <link
-      href="https://fonts.googleapis.com/css?family=Montserrat&display=swap"
-      rel="stylesheet"
-    />
-    <link rel="shortcut icon" href="images/memory-black-48dp.png" />
-  </head>
-  <body>
-    <div id="top">
-      <div>
-        <h3 class="descricao">leoc01</h3>
-        <h1><a href="index.html">Pimba</a></h1>
-        <button id="change-user">Change User</button>
-      </div>
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VOO</title>
+<style>
+  [hidden] { display: none !important; }
+  :root { --bg: #0f1218; --fg: #e8ecf2; --dim: #8a94a6; --acc: #ffd166; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); overflow: hidden;
+    font-family: "DejaVu Sans Mono", Menlo, Consolas, monospace; }
+  #tela { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; image-rendering: pixelated; }
+  #inicio { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: radial-gradient(ellipse at 50% 35%, #2a4a7a 0%, #16243c 55%, #0f1218 100%); cursor: pointer; }
+  .caixa { width: min(560px, 90vw); text-align: center; }
+  h1 { font-size: 64px; letter-spacing: 0.25em; margin: 0 0 4px; text-indent: 0.25em; }
+  .sub { color: var(--dim); margin: 0 0 36px; }
+  .trilho { height: 6px; background: #ffffff1a; border-radius: 3px; overflow: hidden; }
+  #bar { height: 100%; width: 0; background: var(--acc); transition: width 0.15s; }
+  #status { color: var(--dim); margin-top: 12px; min-height: 1.2em; font-size: 14px; }
+  #comecar { font-size: 20px; color: var(--acc); animation: pisca 1.6s ease-in-out infinite; }
+  @keyframes pisca { 50% { opacity: 0.45; } }
+  .teclas { margin-top: 28px; color: var(--dim); font-size: 13px; line-height: 1.7; }
+  #erro { color: #ff8a80; }
+</style>
+</head>
+<body>
+<canvas id="tela"></canvas>
+<div id="inicio">
+  <div class="caixa">
+    <h1>VOO</h1>
+    <p class="sub">um monomotor, dois aeroportos, 16 km de mundo</p>
+    <div id="carregando">
+      <div class="trilho"><div id="bar"></div></div>
+      <div id="status">Carregando...</div>
+      <div id="erro" hidden>Este jogo precisa de um navegador com WebGL2 (Chrome, Edge, Firefox ou Safari recentes).</div>
     </div>
-    <div id="principal-img">
-      <img
-        src="images/old-computer.png"
-        alt="Logo do site: Imagem de um computador antigo"
-      />
+    <div id="comecar" hidden>clique ou aperte qualquer tecla / botao para voar</div>
+    <div class="teclas">
+      setas: manche &nbsp; W/S: motor &nbsp; A/D: leme &nbsp; F/V: flaps &nbsp; ESC: menu<br>
+      controle: analogico esquerdo, RB/LB motor, LT/RT leme, START menu
     </div>
-    <div id="inter">
-      <p>Abaixo, uma lista das coisas que me interessam:</p>
-      <ul>
-        <li>DIY</li>
-        <li>Barcos</li>
-        <li>Programação</li>
-        <li>Música</li>
-      </ul>
-    </div>
-    <script src="scripts/main.js"></script>
-  </body>
+  </div>
+</div>
+<script type="module" src="./voo.js"></script>
+</body>
 </html>

@@ -52,6 +52,7 @@ const float BGRID_CELL = 64.0;
 const int BGRID_N = 256;
 const float BUILD_HMAX = 40.0;
 const int GK_SKY = 0, GK_CLOUD = 1, GK_LAND = 2, GK_WATER = 3, GK_BOX = 4, GK_PLANE = 5, GK_LIGHT = 6;
+const float SMALL_VIEW = 1500.0;
 const int STYLE_POSTER = 2;
 
 // ---------- utilidades (iguais ao C) ----------
@@ -136,10 +137,12 @@ bool boxBucket(int bx, int by, vec3 ro, vec3 rd, inout float best, out vec3 nrm,
         float cx = b0.x + WORLD * floor((px - b0.x) / WORLD + 0.5);
         float cy = b0.y + WORLD * floor((py - b0.y) / WORLD + 0.5);
         float dx = ro.x - cx, dy = ro.y - cy;
+        if (b1.x < 0.0 && dx * dx + dy * dy > SMALL_VIEW * SMALL_VIEW) continue;   // vaca longe: nao cintila
+        float hx = abs(b1.x);
         vec3 o = vec3(dx * b1.z + dy * b1.w, -dx * b1.w + dy * b1.z, ro.z);
         vec3 d = vec3(rd.x * b1.z + rd.y * b1.w, -rd.x * b1.w + rd.y * b1.z, rd.z);
         float tn, sg; int ax;
-        if (rayBox(o, d, vec3(-b1.x, -b1.y, b0.z), vec3(b1.x, b1.y, b0.w), 0.01, best, tn, ax, sg)) {
+        if (rayBox(o, d, vec3(-hx, -b1.y, b0.z), vec3(hx, b1.y, b0.w), 0.01, best, tn, ax, sg)) {
             best = tn; bi = b; hit = true;
             if (ax == 2) nrm = vec3(0.0, 0.0, sg);
             else {
@@ -413,6 +416,7 @@ vec3 shadeBox(int bi, vec3 p, vec3 n, vec3 ro, out int kind) {
         float wu = mod(u + 1000.0, 3.2), wz = mod(p.z - b0.z, 3.4);
         if (wu > 0.8 && wu < 2.4 && wz > 1.1 && wz < 2.3 && p.z < b0.w - 0.6) c *= vec3(0.35, 0.45, 0.6);
     }
+    if ((flags & 2) != 0 && noiseSmooth(p.x * 1.7 + p.z * 1.1, p.y * 1.7 - p.z * 0.8, 21) > 0.58) c *= vec3(0.17, 0.16, 0.16);   // malhas
     return c;
 }
 
@@ -517,13 +521,12 @@ void main() {
 }`;
 
 // ---------------------------------------------------------------------------
-// pos: contornos (laplaciano de 1/distancia), costa e paleta retro
+// pos: contornos (laplaciano de 1/distancia) e costa
 // ---------------------------------------------------------------------------
 export const POST_FS = `#version 300 es
 precision highp float;
 precision highp sampler2D;
 uniform sampler2D uColor, uG;
-uniform int uRetro;
 in vec2 vUV;
 out vec4 oColor;
 const int GK_SKY = 0, GK_CLOUD = 1, GK_LAND = 2, GK_WATER = 3;
@@ -540,15 +543,6 @@ int kindAt(ivec2 q) {
     if (q.x < 0 || q.y < 0 || q.x >= sz.x || q.y >= sz.y) return -1;
     return int(texelFetch(uG, q, 0).y + 0.5);
 }
-
-const vec3 PAL[32] = vec3[32](
-    vec3(0x1d,0x2b,0x53), vec3(0x29,0xad,0xff), vec3(0x7c,0xc8,0xff), vec3(0xc2,0xe6,0xff), vec3(0xff,0xff,0xff),
-    vec3(0x1e,0x56,0x31), vec3(0x2f,0x7d,0x32), vec3(0x4c,0xaf,0x50), vec3(0x8b,0xc3,0x4a), vec3(0xc5,0xe1,0x7a),
-    vec3(0x5d,0x3a,0x1a), vec3(0x8d,0x55,0x24), vec3(0xc6,0x86,0x42), vec3(0xe0,0xac,0x69), vec3(0xf1,0xd6,0xa0),
-    vec3(0x22,0x20,0x34), vec3(0x45,0x44,0x4f), vec3(0x6b,0x6e,0x7a), vec3(0x9b,0xad,0xb7), vec3(0xcb,0xdb,0xfc),
-    vec3(0x0e,0x4a,0x7a), vec3(0x1f,0x78,0xb4), vec3(0x4f,0xa3,0xd1), vec3(0x9f,0xe2,0xe6), vec3(0xd9,0x57,0x63),
-    vec3(0xdf,0x71,0x26), vec3(0xfb,0xf2,0x36), vec3(0xff,0xb3,0xa7), vec3(0x7a,0x4a,0x8a), vec3(0x3f,0x3f,0x74),
-    vec3(0xb5,0xa6,0xc9), vec3(0x8a,0x6f,0x9e));
 
 void main() {
     ivec2 q = ivec2(gl_FragCoord.xy);
@@ -576,18 +570,6 @@ void main() {
             float far = smoothstep(3000.0, 14000.0, g.x);
             col = mix(col, vec3(0.97), 0.65 * (1.0 - far * 0.6));
         }
-    }
-    if (uRetro == 1) {
-        float B[16] = float[16](0., 8., 2., 10., 12., 4., 14., 6., 3., 11., 1., 9., 15., 7., 13., 5.);
-        float d = (B[(q.y & 3) * 4 + (q.x & 3)] / 16.0 - 0.47) * 0.07;
-        vec3 cc = col + d;
-        float best = 1e9; vec3 bc = vec3(0.0);
-        for (int i = 0; i < 32; i++) {
-            vec3 e = PAL[i] / 255.0 - cc;
-            float s = e.r * e.r * 0.35 + e.g * e.g * 0.5 + e.b * e.b * 0.15;
-            if (s < best) { best = s; bc = PAL[i] / 255.0; }
-        }
-        col = bc;
     }
     oColor = vec4(col, 1.0);
 }`;

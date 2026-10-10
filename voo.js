@@ -128,7 +128,7 @@ async function main() {
   await generateWorld(module, w);
   setProgress(0.94, 'Enviando o mundo para a placa de video...');
   await new Promise((r) => setTimeout(r, 0));
-  w.voo_init(parseInt(params.get('hora') || '0', 10));
+  w.voo_init(parseInt(params.get('hora') || '2', 10));
   renderer.uploadWorld(w);
   let sunVersion = w.voo_sun_version();
   setProgress(1, '');

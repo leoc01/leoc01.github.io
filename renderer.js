@@ -1,5 +1,5 @@
 // renderer.js - WebGL2: dados do mundo viram texturas, o shader faz o raymarching,
-// uma passada desenha contornos/costa/retro, outra os pontos da pista, e por cima
+// uma passada desenha contornos/costa, outra os pontos da pista, e por cima
 // vai a grade de celulas do painel e do menu (mesmo codigo C do terminal).
 import { QUAD_VS, SCENE_FS, POST_FS, POINTS_VS, POINTS_FS, BLIT_FS, CELLS_FS, FX_VS, FX_FS } from './shaders.js';
 
@@ -273,7 +273,7 @@ export class Renderer {
     gl.uniform1i(u.uNPB, this.nPlaneBoxes);
     this.drawQuad(p);
 
-    // 1b) explosao/fumaca do acidente, por cima da cor da cena (antes do retro)
+    // 1b) explosao/fumaca do acidente, por cima da cor da cena (antes dos contornos)
     if (f.nfx > 0) {
       p = this.progFx;
       gl.useProgram(p);
@@ -298,13 +298,12 @@ export class Renderer {
       gl.disable(gl.BLEND);
     }
 
-    // 2) contornos, costa, retro
+    // 2) contornos e costa
     p = this.progPost;
     gl.useProgram(p);
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbPost);
     this.bindTex(p, 'uColor', 0, this.tColor);
     this.bindTex(p, 'uG', 1, this.tG);
-    gl.uniform1i(p.u.uRetro, I[15] === 4 ? 1 : 0);
     this.drawQuad(p);
 
     // 3) realce da pista (pontos com teste de profundidade)

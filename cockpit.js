@@ -84,7 +84,9 @@ const GAUGES = [
       line(c, angPt(x, y, R * 0.96, ASI(163)), angPt(x, y, R * 0.7, ASI(163)), C.redArc, R * 0.07, 'butt');
       ticks(c, x, y, R, ASI(0), ASI(180), 9, 2);
       for (const v of [40, 80, 120, 160]) label(c, x, y, R, ASI(v), String(v), R * 0.25, 0.6);
-    }, hands(c, x, y, R, I) { readout(c, x, y, R, String(Math.max(0, Math.round(I.kt)))); text(c, x, y + R * 0.78, 'KT', R * 0.15, C.mark); needle(c, x, y, R, ASI(I.kt)); } },
+    }, hands(c, x, y, R, I) {   // abaixo de ~20 kt o velocimetro de verdade nao registra (o vento parado nao aparece)
+      const kt = I.kt < 20 ? 0 : I.kt;
+      readout(c, x, y, R, String(Math.round(kt))); text(c, x, y + R * 0.78, 'KT', R * 0.15, C.mark); needle(c, x, y, R, ASI(kt)); } },
   { y: xs[1], z: z1, r: r6, dynamicFace: true, hands(c, x, y, R, I) {   // horizonte artificial
       c.save(); c.beginPath(); c.arc(x, y, R, 0, Math.PI * 2); c.clip();
       c.translate(x, y); c.rotate(rad(-I.roll));

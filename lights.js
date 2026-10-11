@@ -11,6 +11,7 @@ const VS = `#version 300 es
 precision highp float;
 layout(location = 0) in vec4 aP;   // posicao relativa a camera (camera: x direita, y cima, z frente) e raio (m)
 layout(location = 1) in vec4 aC;   // cor e intensidade
+layout(location = 2) in float aT;  // folga (m): a propria ponta da asa nao esconde a luz dela
 uniform float uTanX, uHW, uPx;     // uPx: pixels por unidade de tela (meia largura)
 uniform sampler2D uG;              // G-buffer do mundo (distancia, tipo)
 uniform sampler2D uA;              // profundidade da cabine (w), 1x1 vazia fora da cabine
@@ -30,7 +31,7 @@ void main() {
     int k = int(g.y + 0.5);
     if (k != 0 && k != 1 && k != 7 && g.x < d * 0.98 - 1.0) return;   // atras do relevo ou de predios
     vec4 a = texelFetch(uA, ivec2(clamp(uv, 0.0, 0.999) * uASize), 0);
-    if (a.w > 0.0 && a.w < d - 0.25) return;                           // atras da cabine ou da asa
+    if (a.w > 0.0 && a.w < d - aT) return;                           // atras da cabine ou da asa
     gl_Position = vec4(ndc, 0.0, 1.0);
     gl_PointSize = clamp(aP.w / p.z * uPx, 3.0, 160.0);
 }`;
@@ -48,12 +49,12 @@ void main() {
 
 // luzes no referencial do aviao (x frente, y direita, z cima): posicao, raio do brilho, cor, nivel minimo
 const DEFS = [
-  { p: [0.95, -5.66, 0.90], r: 0.9, c: [1.0, 0.12, 0.08], lv: 1 },                 // navegacao esquerda
-  { p: [0.95, 5.66, 0.90], r: 0.9, c: [0.15, 1.0, 0.30], lv: 1 },                  // direita
+  { p: [0.10, -5.69, 0.90], r: 0.9, c: [1.0, 0.12, 0.08], lv: 1, tol: 1.05 },                 // navegacao esquerda
+  { p: [0.10, 5.69, 0.90], r: 0.9, c: [0.15, 1.0, 0.30], lv: 1, tol: 1.05 },                  // direita
   { p: [-5.56, 0, 0.50], r: 0.7, c: [1.0, 0.98, 0.92], lv: 1 },                    // cauda
   { p: [-5.05, 0, 2.00], r: 1.2, c: [1.0, 0.10, 0.05], lv: 1, kind: 'beacon' },     // farol rotativo
-  { p: [0.90, -5.70, 0.90], r: 2.4, c: [1.0, 1.0, 1.0], lv: 2, kind: 'strobe' },    // strobes nas pontas
-  { p: [0.90, 5.70, 0.90], r: 2.4, c: [1.0, 1.0, 1.0], lv: 2, kind: 'strobe' },
+  { p: [0.00, -5.72, 0.90], tol: 1.2, r: 2.4, c: [1.0, 1.0, 1.0], lv: 2, kind: 'strobe' },    // strobes nas pontas
+  { p: [0.00, 5.72, 0.90], tol: 1.2, r: 2.4, c: [1.0, 1.0, 1.0], lv: 2, kind: 'strobe' },
   { p: [3.02, 0, -0.24], r: 1.4, c: [1.0, 0.93, 0.78], lv: 3, kind: 'land' },        // farol de pouso no nariz
 ];
 
@@ -65,10 +66,11 @@ export class Lights {
     this.vao = gl.createVertexArray();
     gl.bindVertexArray(this.vao);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.buf);
-    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 4, gl.FLOAT, false, 32, 0);
-    gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 32, 16);
+    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 4, gl.FLOAT, false, 36, 0);
+    gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 36, 16);
+    gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 1, gl.FLOAT, false, 36, 32);
     gl.bindVertexArray(null);
-    this.data = new Float32Array(DEFS.length * 8);
+    this.data = new Float32Array(DEFS.length * 9);
     this.empty = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, this.empty);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, 1, 1, 0, gl.RGBA, gl.HALF_FLOAT, null);
@@ -110,13 +112,14 @@ export class Lights {
         inten = 0.15 + 1.6 * Math.pow(Math.max(c, 0), 6);
       }
       if (inten <= 0) continue;
-      const o = n * 8;
+      const o = n * 9;
       this.data[o] = w[0] * CR[0] + w[1] * CR[1] + w[2] * CR[2];
       this.data[o + 1] = w[0] * CU[0] + w[1] * CU[1] + w[2] * CU[2];
       this.data[o + 2] = w[0] * CF[0] + w[1] * CF[1] + w[2] * CF[2];
       this.data[o + 3] = L.r * (L.kind === 'strobe' ? 1 : 1);
       this.data[o + 4] = L.c[0]; this.data[o + 5] = L.c[1]; this.data[o + 6] = L.c[2];
       this.data[o + 7] = inten * dark;
+      this.data[o + 8] = L.tol || 0.25;
       n++;
     }
     if (!n) return;
@@ -131,7 +134,7 @@ export class Lights {
     gl.uniform2f(p.u.uASize, aTex ? aW : 1, aTex ? aH : 1);
     gl.bindVertexArray(this.vao);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.buf);
-    gl.bufferData(gl.ARRAY_BUFFER, this.data.subarray(0, n * 8), gl.STREAM_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, this.data.subarray(0, n * 9), gl.STREAM_DRAW);
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE);
     gl.drawArrays(gl.POINTS, 0, n);

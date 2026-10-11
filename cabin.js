@@ -53,16 +53,17 @@ const VF = 13;   // floats por vertice: pos3 normal3 cor3 material uv2 oclusao
 // geometria da cabine (precisa bater com o shader: ver SHELL_GLSL)
 // ---------------------------------------------------------------------------
 const X_AFT = -1.70, X_FWD = 1.46;
-const roofZ = (x) => x > -0.45 ? 0.80 : 0.80 - (-0.45 - x) * 0.192;
+const ROOF_BRK = -0.85;   // o teto desce atras do bordo de fuga da asa
+const roofZ = (x) => x > ROOF_BRK ? 0.80 : 0.80 - (ROOF_BRK - x) * 0.282;
 const floorZ = (x) => -0.40 + 0.12 * sstep(-0.6, -1.70, x);
 const halfW = (x) => 0.565 - 0.095 * sstep(-0.7, -1.70, x);
 const RB = 0.12, RT = 0.14;          // raios dos cantos de baixo e de cima da secao
-const xws = (z) => 1.29 - (z - 0.245) * 0.53;   // linha do para-brisa no meio: (1.29, 0.245) a (1.0, 0.80)
+const xws = (z) => 1.29 - (z - 0.245) * 0.81;   // linha do para-brisa no meio: (1.29, 0.245) a (1.0, 0.80)
 // o para-brisa abraca os lados: a base desce acompanhando o arco da pala e, em cima, os lados
 // recuam (as colunas ficam mais para tras e para fora, como no 172)
 const zbase = (y) => glareEdgeZ(y) - 0.006;
 // coluna (A) na parede lateral: comeca logo atras do canto do painel e recua ate o teto
-const xpil = (z) => 1.13 - (z - 0.10) * 0.42;
+const xpil = (z) => 1.13 - (z - 0.10) * 0.47;
 const xw = (y, z) => lerp(xws(Math.max(z, zbase(y))), xpil(z), sstep(0.22, 0.565, Math.abs(y)));
 const PX = PANEL.PX;                  // plano do painel
 const YOKE_Y = [-0.27, 0.27], YOKE_Z = 0.035, YOKE_X = 0.95;
@@ -428,7 +429,7 @@ function buildStatic(m, sdf) {
 }
 
 // ----- o aviao visto de dentro (fixo) -----
-const WING = { le: 1.20, te: -0.40, hinge: -0.12, zb: 0.83, t: 0.16 };
+const WING = { le: 0.80, te: -0.80, hinge: -0.52, zb: 0.83, t: 0.16 };   // bordo de ataque ~0,65 m atras da parede de fogo, como no 172
 const FLAP_Y = [0.565, 2.85], AIL_Y = [3.05, 5.15], TIP_Y = 5.25, SPAN = 5.6;
 const wingProf = (() => {
   // perfil inteiro (corda 1.6) e as duas partes: fixa (bordo de ataque ate a articulacao) e movel
@@ -501,9 +502,9 @@ function buildExterior(m) {
     m.extrude(wingProf.mov, ys(AIL_Y[1], TIP_Y, 1), { col: white, mat: M_EXT, closed: true });
     m.extrude(wingProf.full, ys(TIP_Y, SPAN, 2), { col: COL.wine, mat: M_EXT, closed: true, caps: [[s * SPAN, s]] });
     // luz de navegacao na ponta
-    m.rbox([0.95, s * (SPAN + 0.02), 0.90], IDENT, [0.05, 0.02, 0.02], 0.015, { col: s < 0 ? COL.navRed : COL.green, mat: M_NAV });
+    m.rbox([0.10, s * (SPAN + 0.02), 0.90], IDENT, [0.10, 0.02, 0.02], 0.015, { col: s < 0 ? COL.navRed : COL.green, mat: M_NAV });
     // montante (perfil achatado) da fuselagem ate a asa
-    const a = [0.42, s * 0.58, -0.32], b = [0.42, s * 2.40, WING.zb + 0.01], ax = norm(sub(b, a));
+    const a = [0.30, s * 0.58, -0.32], b = [0.30, s * 2.40, WING.zb + 0.01], ax = norm(sub(b, a));
     const side = norm(cross(ax, [1, 0, 0])), Ls = len(sub(b, a));
     const U = [], A = [];
     for (let k = 0; k <= 6; k++) U.push(k / 6);
@@ -548,7 +549,7 @@ function buildExterior(m) {
 
 // ----- so de fora: pele da fuselagem, trem de pouso, escapamento, cabeca do piloto -----
 const SKIN_BOT = -0.56;
-const skinTop = (x) => x > -0.45 ? 0.865 : lerp(0.58, 0.865, sstep(X_AFT, -0.45, x));
+const skinTop = (x) => x > ROOF_BRK ? 0.865 : lerp(0.58, 0.865, sstep(X_AFT, ROOF_BRK, x));
 function skinPoint(x, s) { return rrSection(x, halfW(x) + 0.013, skinTop(x), SKIN_BOT, 0.22, 0.16, s); }
 // secao de retangulo arredondado (largura w, topo r, fundo f, raios de baixo e de cima), por comprimento de arco s
 function rrSection(x, w, r, f, rb, rt, s) {
@@ -595,20 +596,20 @@ function buildOutside(m) {
     for (let k = 0; k <= 14; k++) T.push(k / 14);
     for (let k = 0; k <= 18; k++) A.push(k / 18 * Math.PI * 2);
     m.surf(T, A, (t, a) => {
-      const f = t < 0.35 ? Math.sqrt(Math.sin(Math.PI * t / 0.7)) : 1 - 0.8 * ((t - 0.35) / 0.65) ** 1.5;
-      return [c[0] + hx - 2 * hx * t, c[1] + hy * f * Math.cos(a), c[2] + hz * f * Math.sin(a) + 0.03 * (t - 0.5)];
+      const f = t < 0.45 ? Math.sqrt(Math.sin(Math.PI * t / 0.9)) : 1 - 0.75 * ((t - 0.45) / 0.55) ** 1.6;   // mais gorda no meio (onde fica a roda)
+      return [c[0] + hx * 0.9 - 2 * hx * t, c[1] + hy * f * Math.cos(a), c[2] + hz * f * Math.sin(a)];
     }, { col: COL.white, mat: M_LIVERY, ref: (p) => [p[0], c[1], c[2]] });
   };
   for (const s of [-1, 1]) {
     flat([-0.05, s * 0.40, SKIN_BOT + 0.04], [-0.12, s * 1.15, -0.93], 0.05, 0.016, COL.white);
     wheel([-0.12, s * 1.22, -0.99], 0.21, 0.065);
-    pant([-0.09, s * 1.22, -0.93], 0.37, 0.09, 0.19);
+    pant([-0.12, s * 1.22, -0.93], 0.42, 0.10, 0.23);
   }
   // trem do nariz: perna com amortecedor cromado, roda e carenagem
   m.cyl([2.18, 0, -0.40], [2.24, 0, -0.74], 0.04, { col: COL.white, mat: M_EXT }, 10);
   m.cyl([2.24, 0, -0.74], [2.28, 0, -0.92], 0.026, { col: COL.chrome, mat: M_CHROME }, 10);
   wheel([2.29, 0, -1.03], 0.17, 0.05);
-  pant([2.31, 0, -0.98], 0.30, 0.07, 0.15);
+  pant([2.29, 0, -0.985], 0.33, 0.08, 0.18);
   // escapamento embaixo do capo, a direita
   m.cyl([2.50, 0.20, -0.36], [2.60, 0.24, -0.50], 0.028, { col: COL.dark, mat: M_EXT }, 10);
   // farol rotativo no alto da deriva
@@ -737,9 +738,9 @@ function buildParts() {
   }
   part('elev', 'ext', (m) => m.extrude([[-5.02, 0.375], [-5.20, 0.362], [-5.40, 0.355], [-5.20, 0.348], [-5.02, 0.335]], [-1.70, 1.70],
     { col: COL.white, mat: M_EXT, closed: true, caps: [[-1.70, -1], [1.70, 1]] }));
-  const rprof = [[-5.25, 0.035], [-5.45, 0.012], [-5.52, 0.0], [-5.45, -0.012], [-5.25, -0.035]];
-  part('rud', 'ext', (m) => m.extrude(rprof, [0.40, 1.98], {
-    col: COL.white, mat: M_LIVERY, closed: true, caps: [[1.98, 1]], map: (p) => [p[0], p[2], p[1]], mapN: (n) => [n[0], n[2], n[1]] }));
+  const rprof = [[-5.25, 0.04], [-5.45, 0.014], [-5.52, 0.0], [-5.45, -0.014], [-5.25, -0.04]];   // mesma espessura da deriva na articulacao
+  part('rud', 'ext', (m) => m.extrude(rprof, [0.44, 1.95], {
+    col: COL.white, mat: M_LIVERY, closed: true, caps: [[1.95, 1]], map: (p) => [p[0], p[2], p[1]], mapN: (n) => [n[0], n[2], n[1]] }));
   return parts;
 }
 
@@ -815,10 +816,10 @@ function buildProp(m) {
 // shaders
 // ---------------------------------------------------------------------------
 const SHELL_GLSL = `
-float xws(float z) { return 1.29 - (z - 0.245) * 0.53; }
+float xws(float z) { return 1.29 - (z - 0.245) * 0.81; }
 float glareEdge(float y) { float d = abs(y) - ${GLARE.yc.toFixed(4)}; return d <= 0.0 ? ${GLARE.z.toFixed(4)} : ${(GLARE.z - GLARE.r).toFixed(4)} + sqrt(max(${(GLARE.r * GLARE.r).toFixed(6)} - d * d, 0.0)); }
 float zbase(float y) { return glareEdge(y) - 0.006; }
-float xpil(float z) { return 1.13 - (z - 0.10) * 0.42; }
+float xpil(float z) { return 1.13 - (z - 0.10) * 0.47; }
 float xw(float y, float z) { return mix(xws(max(z, zbase(y))), xpil(z), smoothstep(0.22, 0.565, abs(y))); }
 // cantos de cima do painel (recortados na textura): fora da mascara e da sombra tambem
 bool panelCut(vec3 p) { return abs(p.x - ${PANEL.PX.toFixed(3)}) < 0.002 && p.z > glareEdge(p.y) - 0.004; }
@@ -830,10 +831,12 @@ float shellOpen(vec3 p) {
     float d = 1.0;
     if (p.z > zbase(p.y)) d = (xw(p.y, p.z) - p.x) * 0.88;
     if (abs(p.y) > 0.36) {
-        d = min(d, max(sdRR(p.xz, vec2(0.72, 0.525), vec2(0.59, 0.215), 0.05), (p.x - xw(p.y, p.z) + 0.07) * 0.88));
-        d = min(d, sdRR(p.xz, vec2(-0.49, 0.52), vec2(0.51, 0.20), 0.07));
-    } else if (p.z > 0.5 && p.x < -0.5) {
-        d = min(d, sdRR(p.xy, vec2(-1.08, 0.0), vec2(0.50, 0.335), 0.08));
+        d = min(d, max(sdRR(p.xz, vec2(0.72, 0.52), vec2(0.59, 0.19), 0.05), (p.x - xw(p.y, p.z) + 0.07) * 0.88));
+        // janela de tras: menor e afinando para tras (o topo desce acompanhando a fuselagem)
+        vec2 q = p.xz - vec2(-0.45, 0.51);
+        d = min(d, max(sdRR(p.xz, vec2(-0.45, 0.51), vec2(0.45, 0.17), 0.08), (q.y - 0.12 - q.x * 0.10) * 0.9));
+    } else if (p.z > 0.5 && p.x < -0.85) {
+        d = min(d, sdRR(p.xy, vec2(-1.27, 0.0), vec2(0.33, 0.30), 0.08));
     }
     return d;
 }`;
@@ -889,7 +892,7 @@ float shadowAt(vec3 p, vec3 n) {
     return k * 0.25;
 }
 vec3 shellColor(vec3 p, vec3 n) {
-    float roof = p.x > -0.45 ? 0.80 : 0.80 - (-0.45 - p.x) * 0.192;
+    float roof = p.x > -0.85 ? 0.80 : 0.80 - (-0.85 - p.x) * 0.282;
     vec3 c;
     if (n.z > 0.6) c = vec3(0.29, 0.24, 0.215);                          // carpete
     else if (p.z > roof - 0.075 || n.z < -0.6) {                         // forro do teto, com costuras
@@ -928,10 +931,10 @@ void main() {
     if (mat == 2 && shellOpen(vPos) < 0.0) discard;
     bool paint = mat >= 10, skin = mat == 11;
     if (mat == 10 && cowlInside(vPos)) discard;   // capo: o pedaco que cairia dentro da cabine some
-    if (skin && shellOpen(vPos) < 0.0) discard;   // pele de fora: as mesmas janelas
+    if (skin && shellOpen(vPos) < 0.0 && !(abs(vPos.y) > 0.5 && vPos.z < 0.10 + max(vPos.x - 1.13, 0.0) * 0.95 && vPos.x > xpil(vPos.z) - 0.1)) discard;   // pele de fora: as mesmas janelas (embaixo do para-brisa, lateral fechada)
     if (paint) mat = 5;
     if (mat == 7 || mat == 8) {   // vidro: um veu bem fraco, mais forte de raspao (Fresnel), e faixas de reflexo
-        if (mat == 7 && (shellOpen(vPos) >= 0.0 || (vPos.x > xw(vPos.y, vPos.z) - 0.01 && abs(vPos.y) < 0.5))) discard;   // nas paredes: tambem o pedaco lateral do para-brisa
+        if (mat == 7 && (shellOpen(vPos) >= 0.0 || vPos.x > xw(vPos.y, vPos.z) - 0.01)) discard;
         if (mat == 8) {   // recorta o para-brisa na secao arredondada da cabine
             float w = 0.565 - 0.14, zc = 0.80 - 0.14;
             if (vPos.z > zc && abs(vPos.y) > w && length(vec2(abs(vPos.y) - w, vPos.z - zc)) > 0.14) discard;

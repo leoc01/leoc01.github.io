@@ -2,7 +2,7 @@
 // uma passada desenha contornos/costa, outra os pontos da pista, e por cima
 // vai a grade de celulas do painel e do menu (mesmo codigo C do terminal).
 import { Cockpit } from './cockpit.js';
-import { QUAD_VS, SCENE_FS, POST_FS, POINTS_VS, POINTS_FS, BLIT_FS, CELLS_FS, FX_VS, FX_FS } from './shaders.js';
+import { QUAD_VS, SCENE_FS, POST_FS, POINTS_VS, POINTS_FS, BLIT_FS, CELLS_FS, FX_VS, FX_FS, COCKPIT_FS } from './shaders.js';
 
 const XTERM = (() => {
   const p = [[0,0,0],[128,0,0],[0,128,0],[128,128,0],[0,0,128],[128,0,128],[0,128,128],[192,192,192],
@@ -37,6 +37,7 @@ export class Renderer {
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
     this.ptsBuf = gl.createBuffer();
     this.cockpit = new Cockpit(gl);
+    this.progCk = this.program(QUAD_VS, COCKPIT_FS);
     // explosao: um quad por particula (instanciado), atributos num VAO proprio
     this.progFx = this.program(FX_VS, FX_FS);
     this.fxBuf = gl.createBuffer();
@@ -280,7 +281,8 @@ export class Renderer {
       this.cockpit.update(I2);
       gl.uniform4fv(u.uCk, this.cockpit.build(I[78], I[79]));
       gl.uniform1i(u.uCkN, this.cockpit.n);
-      gl.uniform1f(u.uCkLight, 0.62 + 0.38 * Math.min(1, Math.max(0, I[22] * 2.5)));
+      this.ckLight = 0.62 + 0.38 * Math.min(1, Math.max(0, I[22] * 2.5));
+      gl.uniform1f(u.uCkLight, this.ckLight);
     } else gl.uniform1i(u.uCkN, 0);
     this.bindTex(p, 'uCkTex', 9, this.cockpit.tex);
     this.drawQuad(p);
@@ -350,6 +352,31 @@ export class Renderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, f.smooth ? gl.LINEAR : gl.NEAREST);
     this.bindTex(p, 'uTex', 0, this.tPost);
     this.drawQuad(p);
+
+    // 4b) cabine nitida, na resolucao da tela (o mundo continua pixelado por baixo)
+    if (I[17] > 0) {
+      p = this.progCk;
+      gl.useProgram(p);
+      const u2 = p.u;
+      gl.uniform3f(u2.uCamPos, I[0], I[1], I[2]);
+      gl.uniform3f(u2.uCamF, I[3], I[4], I[5]);
+      gl.uniform3f(u2.uCamR, I[6], I[7], I[8]);
+      gl.uniform3f(u2.uCamU, I[9], I[10], I[11]);
+      gl.uniform1f(u2.uTanX, I[12]);
+      gl.uniform1f(u2.uHW, f.ih / f.iw);
+      gl.uniform1f(u2.uPix, 2 * I[12] / W);
+      gl.uniform1f(u2.uLine, Math.max(1.5, (window.devicePixelRatio || 1) * 1.25));
+      gl.uniform4f(u2.uView, 0, H - viewH, W, viewH);
+      gl.uniform3f(u2.uPPos, I[25], I[26], I[27]);
+      gl.uniform3f(u2.uPF, I[28], I[29], I[30]);
+      gl.uniform3f(u2.uPR, I[31], I[32], I[33]);
+      gl.uniform3f(u2.uPU, I[34], I[35], I[36]);
+      gl.uniform4fv(u2.uCk, this.cockpit.quads);
+      gl.uniform1i(u2.uCkN, this.cockpit.n);
+      gl.uniform1f(u2.uCkLight, this.ckLight);
+      this.bindTex(p, 'uCkTex', 0, this.cockpit.tex);
+      this.drawQuad(p);
+    }
 
     // 5) painel, HUD e menu
     this.drawCells(f.cells, f.cols, f.rows, cellW, cellH, W, H);

@@ -1,3 +1,41 @@
+// ---------- interior da cabine: paralelogramos presos ao aviao ----------
+// (usado pela cena, para a profundidade, e pela passada nitida da cabine)
+const CK_FN = `
+bool cockpitHit(vec3 ro, vec3 rd, out float tOut, out vec3 col, out int id) {
+    vec3 d0 = vec3(wrapf(ro.x - uPPos.x), wrapf(ro.y - uPPos.y), ro.z - uPPos.z);
+    vec3 rb = vec3(dot(d0, uPF), dot(d0, uPR), dot(d0, uPU));
+    vec3 db = vec3(dot(rd, uPF), dot(rd, uPR), dot(rd, uPU));
+    float best = 1e9; int bi = -1; vec2 ab = vec2(0.0); vec3 bn = vec3(1.0, 0.0, 0.0);
+    for (int i = 0; i < 24; i++) {
+        if (i >= uCkN) break;
+        vec4 q0 = uCk[i * 4], q1 = uCk[i * 4 + 1], q2 = uCk[i * 4 + 2], q3 = uCk[i * 4 + 3];
+        vec3 N = cross(q1.xyz, q2.xyz);
+        float den = dot(db, N);
+        if (abs(den) < 1e-9) continue;
+        float t = dot(q0.xyz - rb, N) / den;
+        if (t <= 0.0 || t >= best) continue;
+        vec3 pq = rb + db * t - q0.xyz;
+        float nn = dot(N, N);
+        float a = dot(cross(pq, q2.xyz), N) / nn, b = dot(cross(q1.xyz, pq), N) / nn;
+        if (a < 0.0 || a > 1.0 || b < 0.0 || b > 1.0) continue;
+        if (q0.w > 1.5 && textureLod(uCkTex, q3.xy + vec2(a, 1.0 - b) * q3.zw, 0.0).a < 0.5) continue;   // recorte (manche)
+        best = t; bi = i; ab = vec2(a, b); bn = normalize(N);
+    }
+    id = bi;
+    if (bi < 0) return false;
+    vec4 q0 = uCk[bi * 4], q1 = uCk[bi * 4 + 1], q3 = uCk[bi * 4 + 3];
+    if (q0.w < 0.5) col = q3.rgb;
+    else {
+        // nivel de mipmap pela distancia e pela inclinacao (sem derivadas dentro do laco)
+        float lod = log2(max(best * uPix * q1.w / max(abs(dot(db, bn)), 0.15), 1e-4)) - 0.5;
+        col = textureLod(uCkTex, q3.xy + vec2(ab.x, 1.0 - ab.y) * q3.zw, max(lod, 0.0)).rgb;
+    }
+    col *= uCkLight;
+    tOut = best;
+    return true;
+}
+`;
+
 // shaders.js - render na GPU (WebGL2). Porta do renderizador ilustrado em C
 // (src/render.c + src/render_style.inc + src/style.c): mesmos hashes, mesmas
 // constantes, para poder comparar com a CPU pixel a pixel.
@@ -497,49 +535,16 @@ vec3 shadeWater(vec3 p, vec3 rd, float t) {
     return body;
 }
 
-// ---------- interior da cabine: paralelogramos presos ao aviao ----------
-bool cockpitHit(vec3 ro, vec3 rd, out float tOut, out vec3 col) {
-    vec3 d0 = vec3(wrapf(ro.x - uPPos.x), wrapf(ro.y - uPPos.y), ro.z - uPPos.z);
-    vec3 rb = vec3(dot(d0, uPF), dot(d0, uPR), dot(d0, uPU));
-    vec3 db = vec3(dot(rd, uPF), dot(rd, uPR), dot(rd, uPU));
-    float best = 1e9; int bi = -1; vec2 ab = vec2(0.0); vec3 bn = vec3(1.0, 0.0, 0.0);
-    for (int i = 0; i < 24; i++) {
-        if (i >= uCkN) break;
-        vec4 q0 = uCk[i * 4], q1 = uCk[i * 4 + 1], q2 = uCk[i * 4 + 2], q3 = uCk[i * 4 + 3];
-        vec3 N = cross(q1.xyz, q2.xyz);
-        float den = dot(db, N);
-        if (abs(den) < 1e-9) continue;
-        float t = dot(q0.xyz - rb, N) / den;
-        if (t <= 0.0 || t >= best) continue;
-        vec3 pq = rb + db * t - q0.xyz;
-        float nn = dot(N, N);
-        float a = dot(cross(pq, q2.xyz), N) / nn, b = dot(cross(q1.xyz, pq), N) / nn;
-        if (a < 0.0 || a > 1.0 || b < 0.0 || b > 1.0) continue;
-        if (q0.w > 1.5 && textureLod(uCkTex, q3.xy + vec2(a, 1.0 - b) * q3.zw, 0.0).a < 0.5) continue;   // recorte (manche)
-        best = t; bi = i; ab = vec2(a, b); bn = normalize(N);
-    }
-    if (bi < 0) return false;
-    vec4 q0 = uCk[bi * 4], q1 = uCk[bi * 4 + 1], q3 = uCk[bi * 4 + 3];
-    if (q0.w < 0.5) col = q3.rgb;
-    else {
-        // nivel de mipmap pela distancia e pela inclinacao (sem derivadas dentro do laco)
-        float lod = log2(max(best * uPix * q1.w / max(abs(dot(db, bn)), 0.15), 1e-4));
-        col = textureLod(uCkTex, q3.xy + vec2(ab.x, 1.0 - ab.y) * q3.zw, lod).rgb;
-    }
-    col *= uCkLight;
-    tOut = best;
-    return true;
-}
-
+${CK_FN}
 void main() {
     vec2 ndc = vUV * 2.0 - 1.0;
     vec3 rd = normalize(uCamF + uCamR * (ndc.x * uTanX) + uCamU * (ndc.y * uTanX * uHW));
     vec3 ro = uCamPos;
     if (uCockpit == 1 && uCkN > 0) {
-        float tc; vec3 cc;
-        if (cockpitHit(ro, rd, tc, cc)) {   // o painel tapa tudo atras dele: nem marcha o terreno
+        float tc; vec3 cc; int cid;
+        if (cockpitHit(ro, rd, tc, cc, cid)) {   // o painel tapa tudo atras dele: nem marcha o terreno
             oColor = vec4(cc, 1.0);
-            oG = vec4(tc, float(GK_PLANE), 0.0, 0.0);
+            oG = vec4(tc, 7.0, 0.0, 0.0);      // 7 = cabine (desenhada de novo, nitida, por cima)
             return;
         }
     }
@@ -596,7 +601,9 @@ void main() {
     vec4 g = texelFetch(uG, q, 0);
     int kind = int(g.y + 0.5);
     float c = invd(q);
-    if (c > 0.0) {
+    bool nearCk = kind == 7 || kindAt(q + ivec2(1, 0)) == 7 || kindAt(q - ivec2(1, 0)) == 7 ||
+                  kindAt(q + ivec2(0, 1)) == 7 || kindAt(q - ivec2(0, 1)) == 7;
+    if (c > 0.0 && !nearCk) {
         bool edge = false;
         ivec2 D[4] = ivec2[4](ivec2(-1, 0), ivec2(1, 0), ivec2(0, -1), ivec2(0, 1));
         for (int k = 0; k < 4; k++) {
@@ -793,4 +800,39 @@ void main() {
     if (kind != FLASH && kind != SPARK && rr > 1.0 - 1.8 * fw) col *= mix(1.0, 0.5, smoothstep(0.35, 0.8, a));
     a *= (1.0 - smoothstep(1.0 - fw, 1.0, rr)) * soft;
     oColor = vec4(col * a, a * (1.0 - add));
+}`;
+
+// ---------------------------------------------------------------------------
+// cabine na resolucao nativa da tela: o interior nitido por cima da cena, com contorno
+// ---------------------------------------------------------------------------
+export const COCKPIT_FS = `#version 300 es
+precision highp float;
+precision highp sampler2D;
+uniform vec3 uCamPos, uCamF, uCamR, uCamU;
+uniform float uTanX, uHW, uPix, uLine;
+uniform vec4 uView;        // x0 y0 largura altura da area da imagem (pixels da tela)
+uniform vec3 uPPos, uPF, uPR, uPU;
+uniform vec4 uCk[96];
+uniform int uCkN;
+uniform sampler2D uCkTex;
+uniform float uCkLight;
+out vec4 oColor;
+const float WORLD = 16384.0;
+float wrapf(float d) { return d - WORLD * floor(d / WORLD + 0.5); }
+${CK_FN}
+vec3 rayAt(vec2 frag) {
+    vec2 ndc = (frag - uView.xy) / uView.zw * 2.0 - 1.0;
+    return normalize(uCamF + uCamR * (ndc.x * uTanX) + uCamU * (ndc.y * uTanX * uHW));
+}
+void main() {
+    float t; vec3 col; int id;
+    if (!cockpitHit(uCamPos, rayAt(gl_FragCoord.xy), t, col, id)) discard;
+    // contorno de desenho: onde a peca vizinha (ou o lado de fora) e outra
+    float t2; vec3 c2; int i1, i2, i3, i4;
+    cockpitHit(uCamPos, rayAt(gl_FragCoord.xy + vec2(uLine, 0.0)), t2, c2, i1);
+    cockpitHit(uCamPos, rayAt(gl_FragCoord.xy - vec2(uLine, 0.0)), t2, c2, i2);
+    cockpitHit(uCamPos, rayAt(gl_FragCoord.xy + vec2(0.0, uLine)), t2, c2, i3);
+    cockpitHit(uCamPos, rayAt(gl_FragCoord.xy - vec2(0.0, uLine)), t2, c2, i4);
+    if (i1 != id || i2 != id || i3 != id || i4 != id) col = vec3(0.07, 0.06, 0.07);
+    oColor = vec4(col, 1.0);
 }`;

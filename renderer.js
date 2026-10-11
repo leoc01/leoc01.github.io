@@ -132,12 +132,14 @@ export class Renderer {
   }
 
   uploadShadows(w) {
-    const gl = this.gl, N = w.voo_ter_n(), NN = N * N, mem = w.memory.buffer;
-    const sh = new Uint8Array(mem, w.voo_world_ptr(4), NN), ao = new Uint8Array(mem, w.voo_world_ptr(5), NN);
-    const sa = new Uint8Array(NN * 2);
-    for (let i = 0; i < NN; i++) { sa[i * 2] = sh[i]; sa[i * 2 + 1] = ao[i]; }
-    if (this.tSA) gl.deleteTexture(this.tSA);
-    this.tSA = this.tex(N, N, gl.RG8, gl.RG, gl.UNSIGNED_BYTE, sa, 'linear', true);
+    // sombra + oclusao ja intercaladas no C: uma copia so, sem laco em JS (o sol anda e isto se repete)
+    const gl = this.gl, N = w.voo_ter_n(), sa = new Uint8Array(w.memory.buffer, w.voo_sa(), N * N * 2);
+    if (!this.tSA) { this.tSA = this.tex(N, N, gl.RG8, gl.RG, gl.UNSIGNED_BYTE, sa, 'linear', true); return; }
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.tSA);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, N, N, gl.RG, gl.UNSIGNED_BYTE, sa);
+    gl.generateMipmap(gl.TEXTURE_2D);
   }
 
   // ---------- atlas de glifos (fonte do sistema desenhada num canvas) ----------
@@ -295,8 +297,9 @@ export class Renderer {
     gl.uniform1i(u.uDrawPlane, I[39]);
     gl.uniform3fv(u.uPal, I.subarray(40, 58));
     gl.uniform1f(u.uNight, I[87]);
+    gl.uniform3f(u.uSunPos, I[89], I[90], I[91]);
     const land = Lights.landing(I);
-    gl.uniform4f(u.uLand, land ? land.pos[0] : 0, land ? land.pos[1] : 0, land ? land.pos[2] : 0, land ? (I[87] > 0.5 ? 1.0 : 0.35) : 0);
+    gl.uniform4f(u.uLand, land ? land.pos[0] : 0, land ? land.pos[1] : 0, land ? land.pos[2] : 0, land ? 0.35 + 0.65 * I[87] : 0);
     gl.uniform3f(u.uLandDir, land ? land.dir[0] : 1, land ? land.dir[1] : 0, land ? land.dir[2] : 0);
     gl.uniform1f(u.uHmax, this.hmax);
     gl.uniform1f(u.uPix, 2 * I[12] / f.iw);
@@ -350,10 +353,11 @@ export class Renderer {
 
     // 4b) cabine nitida, na resolucao da tela, por cima do mundo pixelado
     {
+      const refl = this.cabin.reflPass(W, viewH);   // reflexo na agua (so de fora, perto do mar)
       this.cabin.mainPass(W, viewH);
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.viewport(0, H - viewH, W, viewH);
-      this.cabin.compose(quad, 0, H - viewH, Math.max(1, Math.round((window.devicePixelRatio || 1) * 1.1)), this.tG, f.iw / W, f.ih / viewH);
+      this.cabin.compose(quad, 0, H - viewH, Math.max(1, Math.round((window.devicePixelRatio || 1) * 1.1)), this.tG, f.iw / W, f.ih / viewH, refl);
     }
     // 4d) explosao/fumaca do acidente, na tela, por cima do mundo e do destroco (escondida pelo que esta na frente)
     if (f.nfx > 0) {

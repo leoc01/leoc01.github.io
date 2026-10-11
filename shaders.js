@@ -42,7 +42,8 @@ uniform float uProp;
 uniform vec4 uPB[66];      // caixas do aviao: 3 vec4 por caixa
 uniform int uNPB;
 uniform vec3 uPal[6];      // ceu topo, ceu horizonte, nevoa, luz, sombra, sol
-uniform float uNight;      // 1 = noite de lua
+uniform float uNight;      // 0 dia .. 1 noite (continuo)
+uniform vec3 uSunPos;      // o sol de verdade (uSun e a luz: sol de dia, lua de noite)
 uniform highp sampler2DShadow uPSh;   // mapa de sombra do aviao (malha, ver cabin.js), no referencial do aviao
 uniform mat4 uPShM;
 uniform float uPShOn;
@@ -391,13 +392,34 @@ vec3 sky(vec3 ro, vec3 rd, out int kind) {
     vec3 c = mix(uPal[1], uPal[0], smoothstep(0.0, 0.55, h));
     if (rd.z < 0.0) c = uPal[2];
     float mu = dot(rd, uSun);
-    if (uNight > 0.5) {   // lua menor e mais branca, halo fraco, estrelas
-        c += stars(rd);
-        if (mu > 0.99965) c = vec3(0.93, 0.95, 1.0) * (0.85 + 0.15 * smoothstep(0.99965, 0.99995, mu));
-        else if (mu > 0.9975) c = mix(c, uPal[5], 0.12);
-    } else if (mu > 0.9990) c = vec3(1.0, 0.99, 0.90);
-    else if (mu > 0.9965) c = mix(c, uPal[5], 0.6);
-    else if (mu > 0.985) c = mix(c, uPal[5], 0.18);
+    // crepusculo: o lado do sol fica laranja/rosa perto do horizonte, o lado oposto escurece
+    // (a sombra da Terra subindo, com a faixa rosada por cima)
+    float twi = 1.0 - smoothstep(0.0, 0.30, abs(uSunPos.z + 0.03));
+    if (twi > 0.0) {
+        vec2 sd = normalize(uSunPos.xy + vec2(1e-4, 0.0)), dd = normalize(rd.xy + vec2(1e-5, 0.0));
+        float side = dot(sd, dd), hz = 1.0 - smoothstep(0.0, 0.42, max(rd.z, 0.0));
+        float toward = pow(max(side, 0.0), 2.2) * hz * hz;
+        vec3 glow = mix(vec3(1.0, 0.45, 0.20), vec3(1.0, 0.72, 0.42), smoothstep(0.0, 0.25, rd.z));
+        // longe do sol o horizonte da paleta (laranja) vira azul-arroxeado: so o lado do sol fica quente
+        vec3 cool = mix(uPal[0], vec3(0.34, 0.33, 0.55), 0.55) * (1.0 - 0.55 * uNight);
+        float notToward = 1.0 - pow(max(side * 0.5 + 0.5, 0.0), 1.6);
+        c = mix(c, cool, twi * notToward * hz * 0.85);
+        c = mix(c, glow * (0.35 + 0.65 * (1.0 - uNight * 0.6)), twi * toward * 0.85);
+        float away = max(-side, 0.0) * hz;
+        c = mix(c, c * vec3(0.55, 0.55, 0.75), twi * away * 0.6);                                   // lado escuro
+        c = mix(c, vec3(0.80, 0.55, 0.62) * (1.0 - 0.5 * uNight), twi * away * smoothstep(0.08, 0.2, rd.z) * (1.0 - smoothstep(0.2, 0.35, rd.z)) * 0.35);   // faixa rosada
+    }
+    c += stars(rd) * uNight;
+    float ms = dot(rd, -uSunPos);   // a lua, no lado oposto
+    if (-uSunPos.z > -0.02 && ms > 0.99965) c = vec3(0.93, 0.95, 1.0) * (0.85 + 0.15 * smoothstep(0.99965, 0.99995, ms));
+    else if (-uSunPos.z > -0.02 && ms > 0.9975) c = mix(c, vec3(0.80, 0.86, 1.0), 0.12 * uNight);
+    float ss = dot(rd, uSunPos);    // o sol
+    vec3 sunc = mix(vec3(1.0, 0.99, 0.90), vec3(1.0, 0.62, 0.30), twi);
+    if (uSunPos.z > -0.03) {
+        if (ss > 0.9990) c = sunc;
+        else if (ss > 0.9965) c = mix(c, mix(uPal[5], sunc, twi), 0.6);
+        else if (ss > 0.985) c = mix(c, mix(uPal[5], sunc, twi), 0.18 + 0.2 * twi);
+    }
     kind = GK_SKY;
     if (uClouds == 1 && rd.z > 1e-3) {
         float tc = (CLOUD_Z - ro.z) / rd.z;
@@ -454,7 +476,7 @@ vec3 shadeBox(int bi, vec3 p, vec3 n, vec3 ro, out int kind) {
         float wu = mod(u + 1000.0, 3.2), wz = mod(p.z - b0.z, 3.4);
         if (wu > 0.8 && wu < 2.4 && wz > 1.1 && wz < 2.3 && p.z < b0.w - 0.6) {
             c *= vec3(0.35, 0.45, 0.6);
-            if (uNight > 0.5 && hash3f(int(floor((u + 1000.0) / 3.2)), int(floor((p.z - b0.z) / 3.4)), bi) > 0.45) c = vec3(1.0, 0.78, 0.42);   // janela acesa
+            if (uNight > 0.6 && hash3f(int(floor((u + 1000.0) / 3.2)), int(floor((p.z - b0.z) / 3.4)), bi) > 0.45) c = vec3(1.0, 0.78, 0.42);   // janela acesa
         }
     }
     if ((flags & 2) != 0 && noiseSmooth(p.x * 1.7 + p.z * 1.1, p.y * 1.7 - p.z * 0.8, 21) > 0.58) c *= vec3(0.17, 0.16, 0.16);   // malhas
@@ -495,14 +517,14 @@ vec3 shadeLand(vec3 p, float t, bool primary, out float mat) {
     vec3 c = celLight(base, max(dot(n, uSun), 0.0) * 1.25, sh);
     c *= 0.75 + 0.25 * sa.g;
     if (primary) c += landLight(p, n, base);
-    if (uNight > 0.5 && int(mat + 0.5) == 7) {   // cidade de noite: janelas e postes acesos
+    if (uNight > 0.25 && int(mat + 0.5) == 7) {   // cidade de noite: janelas e postes acesos
         ivec2 q = ivec2(floor(p.xy / 7.0));
         float h = hash3f(q.x, q.y, 41);
         vec2 f = fract(p.xy / 7.0) - 0.5;
         float dot_ = h > 0.55 ? smoothstep(0.32, 0.08, length(f)) : 0.0;
         float far = smoothstep(250.0, 1800.0, t);
         float glow = mix(dot_ * (0.6 + 0.8 * (h - 0.55) / 0.45), 0.30, far);
-        c += vec3(1.0, 0.72, 0.38) * glow;
+        c += vec3(1.0, 0.72, 0.38) * glow * smoothstep(0.25, 0.8, uNight);
     }
     return c;
 }
@@ -511,12 +533,7 @@ vec3 shadeLand(vec3 p, float t, bool primary, out float mat) {
 vec3 surfaceRefl(vec3 ro, vec3 rd) {
     float th; int box; vec3 bn;
     int hit = march(ro, rd, 6000.0, th, box, bn);
-    float tp; vec3 pn, pc;
-    if (uDrawPlane == 1 && planeHit(ro, rd, th, false, tp, pn, pc)) {
-        vec3 p = ro + rd * tp;
-        float sh = p.z < terH(p.xy) + 40.0 ? shAO(p.xy, 0.0).r : 1.0;
-        return fogC(celLight(pc, max(dot(pn, uSun), 0.0) + 0.15, sh), tp);
-    }
+    // o aviao refletido vem da malha (cabin.js), misturado na composicao
     int kind;
     if (hit == 0) return sky(ro, rd, kind);
     vec3 p = ro + rd * th;

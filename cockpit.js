@@ -85,7 +85,7 @@ const GAUGES = [
       ticks(c, x, y, R, ASI(0), ASI(180), 9, 2);
       for (const v of [40, 80, 120, 160]) label(c, x, y, R, ASI(v), String(v), R * 0.25, 0.6);
     }, hands(c, x, y, R, I) {   // abaixo de ~20 kt o velocimetro de verdade nao registra (o vento parado nao aparece)
-      const kt = I.kt < 20 ? 0 : I.kt;
+      const kt = I.kt * Math.min(1, Math.max(0, (I.kt - 15) / 15)) ** 1.5;   // sai do batente de leve entre 15 e 30 kt
       readout(c, x, y, R, String(Math.round(kt))); text(c, x, y + R * 0.78, 'KT', R * 0.15, C.mark); needle(c, x, y, R, ASI(kt)); } },
   { y: xs[1], z: z1, r: r6, dynamicFace: true, hands(c, x, y, R, I) {   // horizonte artificial
       c.save(); c.beginPath(); c.arc(x, y, R, 0, Math.PI * 2); c.clip();

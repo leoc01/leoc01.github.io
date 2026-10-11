@@ -601,9 +601,9 @@ function buildOutside(m) {
     }, { col: COL.white, mat: M_LIVERY, ref: (p) => [p[0], c[1], c[2]] });
   };
   for (const s of [-1, 1]) {
-    flat([-0.05, s * 0.40, SKIN_BOT + 0.04], [-0.12, s * 1.15, -0.93], 0.05, 0.016, COL.white);
-    wheel([-0.12, s * 1.22, -0.99], 0.21, 0.065);
-    pant([-0.12, s * 1.22, -0.93], 0.42, 0.10, 0.23);
+    flat([-0.12, s * 0.40, SKIN_BOT + 0.04], [-0.40, s * 1.15, -0.93], 0.05, 0.016, COL.white);   // mola inclinada para tras
+    wheel([-0.40, s * 1.22, -0.99], 0.21, 0.065);
+    pant([-0.40, s * 1.22, -0.93], 0.42, 0.10, 0.23);
   }
   // trem do nariz: perna com amortecedor cromado, roda e carenagem
   m.cyl([2.18, 0, -0.40], [2.24, 0, -0.74], 0.04, { col: COL.white, mat: M_EXT }, 10);
@@ -852,12 +852,14 @@ uniform vec3 uEye, uVF, uVR, uVU;   // olho e eixos da camera, no referencial do
 uniform float uTanX, uHW;
 uniform vec2 uNF;                   // planos perto e longe (de fora a camera fica longe)
 uniform mat4 uModel;                // parte movel (manche, flaps...): rotacao + translacao
+uniform mat4 uRefl;                 // espelho na agua (identidade fora da passada do reflexo)
+uniform vec3 uEyeP;                 // olho da projecao (no reflexo uEye e o olho espelhado, para iluminar)
 out vec3 vPos, vNrm, vCol;
 out vec2 vUV;
 out float vMat, vAO;
 void main() {
     vec3 P = (uModel * vec4(aPos, 1.0)).xyz;
-    vec3 d = P - uEye;
+    vec3 d = (uRefl * vec4(P, 1.0)).xyz - uEyeP;
     float x = dot(d, uVR), y = dot(d, uVU), z = dot(d, uVF);
     float n = uNF.x, f = uNF.y;
     gl_Position = vec4(x / uTanX, y / (uTanX * uHW), z * (f + n) / (f - n) - 2.0 * f * n / (f - n), z);
@@ -1067,17 +1069,28 @@ void main() {
 const COMPOSE_FS = `#version 300 es
 precision highp float;
 uniform sampler2D uC, uA, uG;   // cabine/aviao (cor e normal+distancia) e G-buffer do mundo (baixa resolucao)
+uniform sampler2D uR;           // reflexo do aviao na agua (meia resolucao)
+uniform float uROn, uT;
 uniform vec2 uOrigin, uGS;      // uGS: escala da tela para o G-buffer
 uniform int uLine;
 out vec4 oColor;
+// reflexo: so nos pixels de agua, com uma ondulacao leve e um pouco mais escuro e azulado
+vec4 reflAt(ivec2 p, ivec2 sz, int k) {
+    if (uROn < 0.5 || k != 3) return vec4(0.0);
+    vec2 q = vec2(p) + 0.5;
+    q.x += sin(q.y * 0.21 + uT * 2.3) * 1.6 + sin(q.y * 0.067 - uT * 1.4) * 1.2;
+    vec4 r = texture(uR, q / vec2(sz));
+    return vec4(r.rgb * vec3(0.84, 0.90, 0.95), r.a) * 0.8;
+}
 void main() {
     ivec2 p = ivec2(gl_FragCoord.xy - uOrigin), sz = textureSize(uC, 0);
     vec4 c = texelFetch(uC, p, 0);
     vec4 a = texelFetch(uA, p, 0);
+    vec4 g = texelFetch(uG, ivec2(vec2(p) * uGS), 0);
+    int k = int(g.y + 0.5);
+    vec4 r = reflAt(p, sz, k);
     if (a.w > 0.0) {   // atras de um morro ou predio (vista de fora): o mundo esconde o aviao
-        vec4 g = texelFetch(uG, ivec2(vec2(p) * uGS), 0);
-        int k = int(g.y + 0.5);
-        if (k != 0 && k != 1 && k != 7 && g.x < a.w - 0.3) { oColor = vec4(0.0); return; }
+        if (k != 0 && k != 1 && k != 7 && g.x < a.w - 0.3) { oColor = r; return; }
     }
     if (a.w > 0.0) {
         float edge = 0.0;
@@ -1092,7 +1105,7 @@ void main() {
         }
         c.rgb = mix(c.rgb, c.rgb * 0.30 + vec3(0.02, 0.02, 0.045), edge * 0.85);
     }
-    oColor = c;
+    oColor = vec4(c.rgb + (1.0 - c.a) * r.rgb, c.a + (1.0 - c.a) * r.a);
 }`;
 
 // ---------------------------------------------------------------------------
@@ -1198,7 +1211,8 @@ export class Cabin {
     this.dt = Math.min(Math.max((now - this.lastT) / 1000, 0.004), 0.1);
     this.lastT = now;
     if (now - this.lastArt > 30) {
-      this.art.update({ kt: I[67], ft: I[68], hdg: I[69], pitch: I[70], roll: I[71], fpm: I[72], rpm: I[73], flaps: I[74], trim: I[75], turn: I[76], slip: I[77], lights: I[88] });
+      this.kts = this.kts === undefined ? I[67] : this.kts + (I[67] - this.kts) * (1 - Math.exp(-(now - this.lastArt) / 350));   // inercia do ponteiro
+      this.art.update({ kt: this.kts, ft: I[68], hdg: I[69], pitch: I[70], roll: I[71], fpm: I[72], rpm: I[73], flaps: I[74], trim: I[75], turn: I[76], slip: I[77], lights: I[88] });
       this.lastArt = now;
     }
     const PF = [I[28], I[29], I[30]], PR = [I[31], I[32], I[33]], PU = [I[34], I[35], I[36]];
@@ -1209,6 +1223,18 @@ export class Cabin {
       const d = [I[0] - I[25], I[1] - I[26], I[2] - I[27]];
       this.eye = [dot(d, [I[28], I[29], I[30]]), dot(d, [I[31], I[32], I[33]]), dot(d, [I[34], I[35], I[36]])];
     } else this.eye = [I[83], I[84], I[85]];
+    // reflexo na agua (nivel do mar z = 0): R(P) = A P + t no referencial do aviao, A = B^T S B
+    this.reflOn = false;
+    if (outside && I[27] < 350) {
+      const B = [PF, PR, PU], A = new Float32Array(16), t = [0, 0, 0];
+      for (let i = 0; i < 3; i++) {
+        for (let j = 0; j < 3; j++) A[j * 4 + i] = B[i][0] * B[j][0] + B[i][1] * B[j][1] - B[i][2] * B[j][2];
+        t[i] = -2 * I[27] * B[i][2];
+      }
+      A[12] = t[0]; A[13] = t[1]; A[14] = t[2]; A[15] = 1;
+      this.reflM = A;
+      this.reflOn = true;
+    }
     const de = len(this.eye);
     this.nf = outside ? [Math.max(0.05, (de - 8) * 0.5), de + 12] : [0.02, 60];
     this.burnt = I[38] > 0.5 ? 1 : 0;
@@ -1286,6 +1312,8 @@ export class Cabin {
   camUniforms(p) {
     const gl = this.gl, u = p.u;
     gl.uniform3fv(u.uEye, this.eye);
+    gl.uniform3fv(u.uEyeP, this.eye);
+    gl.uniformMatrix4fv(u.uRefl, false, MAT_I);
     gl.uniform3fv(u.uVF, this.vf);
     gl.uniform3fv(u.uVR, this.vr);
     gl.uniform3fv(u.uVU, this.vu);
@@ -1371,9 +1399,9 @@ export class Cabin {
   }
 
   // a cabine na resolucao da tela
-  mainPass(W, H) {
+  mainPass(W, H, refl) {
     const gl = this.gl, p = this.progMain;
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.cFB);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, refl ? this.rFB : this.cFB);
     gl.viewport(0, 0, W, H);
     gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
     gl.clearBufferfv(gl.COLOR, 0, [0, 0, 0, 0]);
@@ -1386,6 +1414,13 @@ export class Cabin {
     gl.useProgram(p);
     this.camUniforms(p);
     const u = p.u;
+    if (refl) {   // projeta o aviao espelhado; ilumina o aviao normal visto do olho espelhado
+      const A = this.reflM, e = this.eye, re = [0, 1, 2].map((i) => A[i] * e[0] + A[4 + i] * e[1] + A[8 + i] * e[2] + A[12 + i]);
+      gl.uniform3fv(u.uEye, re);
+      gl.uniformMatrix4fv(u.uRefl, false, A);
+      const dc = Math.hypot(A[12] - e[0], A[13] - e[1], A[14] - e[2]);
+      gl.uniform2f(u.uNF, Math.max(0.05, (dc - 8) * 0.5), dc + 12);
+    }
     gl.uniform3fv(u.uSunB, this.sunB);
     gl.uniform3fv(u.uLight, this.light);
     gl.uniform3fv(u.uShade, this.shade);
@@ -1407,7 +1442,7 @@ export class Cabin {
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
     gl.uniformMatrix4fv(u.uModel, false, MAT_I);
     this.draw(this.prop);
-    this.draw(this.glass);   // vidros por cima da helice (estao mais perto)
+    if (!refl) this.draw(this.glass);   // vidros por cima da helice (estao mais perto)
     gl.disable(gl.BLEND);
     gl.depthMask(true);
     gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
@@ -1415,8 +1450,40 @@ export class Cabin {
     gl.disable(gl.DEPTH_TEST);
   }
 
+  // reflexo do aviao na agua: o aviao inteiro espelhado no nivel do mar, em meia resolucao
+  reflPass(W, H) {
+    if (!this.reflOn) return false;
+    const gl = this.gl, rw = Math.max(1, W >> 1), rh = Math.max(1, H >> 1);
+    if (this.rw !== rw || this.rh !== rh) {
+      if (this.rFB) { gl.deleteFramebuffer(this.rFB); gl.deleteTexture(this.rTex); gl.deleteTexture(this.rATex); gl.deleteRenderbuffer(this.rRB); }
+      this.rw = rw; this.rh = rh;
+      const mk = (fmt, filt) => {
+        const t = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, t);
+        gl.texStorage2D(gl.TEXTURE_2D, 1, fmt, rw, rh);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filt);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filt);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        return t;
+      };
+      this.rTex = mk(gl.RGBA8, gl.LINEAR);
+      this.rATex = mk(gl.RGBA16F, gl.NEAREST);
+      this.rRB = gl.createRenderbuffer();
+      gl.bindRenderbuffer(gl.RENDERBUFFER, this.rRB);
+      gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, rw, rh);
+      this.rFB = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.rFB);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.rTex, 0);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, this.rATex, 0);
+      gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, this.rRB);
+    }
+    this.mainPass(rw, rh, true);
+    return true;
+  }
+
   // por cima da imagem do mundo, na tela (viewport ja ajustado pelo chamador)
-  compose(drawQuad, ox, oy, line, gTex, gsx, gsy) {
+  compose(drawQuad, ox, oy, line, gTex, gsx, gsy, refl) {
     const gl = this.gl, p = this.progCompose;
     gl.useProgram(p);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.cTex); gl.uniform1i(p.u.uC, 0);
@@ -1425,6 +1492,9 @@ export class Cabin {
     gl.uniform1i(p.u.uLine, line);
     gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, gTex); gl.uniform1i(p.u.uG, 2);
     gl.uniform2f(p.u.uGS, gsx, gsy);
+    gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, refl ? this.rTex : this.cTex); gl.uniform1i(p.u.uR, 3);
+    gl.uniform1f(p.u.uROn, refl ? 1 : 0);
+    gl.uniform1f(p.u.uT, performance.now() / 1000 % 1000);
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
     drawQuad(p);

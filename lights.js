@@ -97,8 +97,8 @@ export class Lights {
     // aviao -> camera: na cabine pelo olho no corpo (sem tremer); fora pela diferenca de posicoes
     const off = cockpit ? [0, 1, 2].map((k) => -(PF[k] * I[83] + PR[k] * I[84] + PU[k] * I[85]))
                         : [0, 1, 2].map((k) => I[25 + k] - I[k]);
-    const day = Math.min(1, Math.max(0, I[22] * 3));   // de dia o brilho fica bem menor
-    const dark = I[87] > 0.5 ? 1 : 1 - 0.75 * day;
+    const day = Math.min(1, Math.max(0, I[91] * 3));   // de dia (sol alto) o brilho fica bem menor
+    const dark = Math.max(I[87], 1 - 0.75 * day);
     let n = 0;
     for (const L of DEFS) {
       if (lv < L.lv) continue;

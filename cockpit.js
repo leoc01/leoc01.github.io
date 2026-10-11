@@ -173,7 +173,7 @@ export const FLAPS = { y: 0.05, z0: 0.205, z1: 0.085 };          // posicoes 0 (
 export const THROTTLE = { y: 0.005, z: 0.03 };                  // manete (empurrar = potencia)
 export const MIXTURE = { y: 0.05, z: 0.03 };
 // pala: borda de baixo reta no meio e descendo arredondada nos cantos (y, z do centro do arco, raio)
-export const GLARE = { z: 0.252, yc: 0.36, r: 0.16 };
+export const GLARE = { z: 0.252, yc: 0.405, r: 0.16 };   // o arco dos cantos chega ate a parede (y = 0.565)
 export const glareEdgeZ = (y) => { const d = Math.abs(y) - GLARE.yc; return d <= 0 ? GLARE.z : (GLARE.z - GLARE.r) + Math.sqrt(Math.max(GLARE.r * GLARE.r - d * d, 0)); };
 
 function drawStatic(c) {
@@ -203,9 +203,9 @@ function drawStatic(c) {
     text(c, x, y - M(0.022), t, M(0.0075), '#e8e0cc');
   }
   // difusores de ar e porta-luvas
-  for (const [vy, vz] of [[-0.455, 0.15], [0.30, 0.2], [0.445, 0.15]]) { const [x, y] = P(vy, vz); circle(c, x, y, M(0.022), C.blackHi, C.out, 2); circle(c, x, y, M(0.012), '#1a1a1e'); circle(c, x - M(0.005), y - M(0.005), M(0.004), '#5a5a62'); }
-  a = P(0.20, 0.15); b = P(0.48, 0.045); rrect(c, a[0], a[1], b[0], b[1], M(0.012), C.creamHi, C.creamSh, M(0.003));
-  a = P(0.30, 0.135); b = P(0.38, 0.125); rrect(c, a[0], a[1], b[0], b[1], M(0.004), C.chrome, C.out, 1.5);
+  for (const [vy, vz] of [[-0.455, 0.15], [0.30, 0.205], [0.445, 0.205]]) { const [x, y] = P(vy, vz); circle(c, x, y, M(0.022), C.blackHi, C.out, 2); circle(c, x, y, M(0.012), '#1a1a1e'); circle(c, x - M(0.005), y - M(0.005), M(0.004), '#5a5a62'); }
+  a = P(0.21, 0.165); b = P(0.47, 0.05); rrect(c, a[0], a[1], b[0], b[1], M(0.012), C.creamHi, C.creamSh, M(0.003));   // porta-luvas
+  a = P(0.30, 0.15); b = P(0.38, 0.14); rrect(c, a[0], a[1], b[0], b[1], M(0.004), C.chrome, C.out, 1.5);
   // interruptores na faixa de baixo (desenhados de novo com a posicao: em cima = ligado)
   SWITCHES.forEach((nm, i) => { const [x, y] = P(SW_Y0 + i * SW_DY, SW_Z); text(c, x, y - M(0.024), nm, M(0.0072), '#e8e0cc'); drawSwitch(c, x, y, false); });
   { const [x, y] = P(-0.20, -0.02); circle(c, x, y, M(0.014), C.chromeSh, C.out, 2); circle(c, x, y, M(0.006), '#222'); }

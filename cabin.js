@@ -59,10 +59,9 @@ const xws = (z) => 1.29 - (z - 0.245) * 0.53;   // linha do para-brisa no meio: 
 // o para-brisa abraca os lados: a base desce acompanhando o arco da pala e, em cima, os lados
 // recuam (as colunas ficam mais para tras e para fora, como no 172)
 const zbase = (y) => glareEdgeZ(y) - 0.006;
-const xw = (y, z) => {
-  const a = Math.abs(y), sw = sstep(0.18, 0.565, a), t = sstep(zbase(y), 0.80, z);
-  return xws(Math.max(z, zbase(y))) - 0.30 * sw * t;
-};
+// coluna (A) na parede lateral: comeca logo atras do canto do painel e recua ate o teto
+const xpil = (z) => 1.13 - (z - 0.10) * 0.42;
+const xw = (y, z) => lerp(xws(Math.max(z, zbase(y))), xpil(z), sstep(0.22, 0.565, Math.abs(y)));
 const PX = PANEL.PX;                  // plano do painel
 const YOKE_Y = [-0.27, 0.27], YOKE_Z = 0.035, YOKE_X = 0.95;
 // pedestal (embaixo do meio do painel), roda do trim e a placa da escala
@@ -348,13 +347,13 @@ function buildStatic(m, sdf) {
       const Y = []; for (let k = 0; k <= 64; k++) Y.push(-0.567 + 1.134 * k / 64);
       const V = [0, 0.15, 0.35, 0.6, 0.85, 1];
       m.surf(Y, V, (y, v) => {
-        const zf = glareEdgeZ(y) + 0.011, zb = zbase(y) - 0.002, xb = xw(y, zb) + 0.006;
+        const zf = glareEdgeZ(y) + 0.011, zb = zbase(y) - 0.002, xb = Math.max(xw(y, zb) + 0.006, PX + 0.035);
         return [lerp(PX - 0.004, xb, v), y, lerp(zf, zb, v) + 0.009 * Math.sin(Math.PI * Math.min(v * 1.15, 1))];
       }, { col: COL.leather, ao: true, ref: (p) => [p[0], p[1] * 0.9, p[2] - 0.3] });
     }
     sdf.box([1.25, 0, 0.255], IDENT, [0.05, 0.57, 0.012], 0.0);
     // friso arredondado da borda: reto no meio e descendo em arco nos cantos (varrido ao longo do caminho)
-    const yEnd = 0.565, zEnd = 0.05;
+    const yEnd = 0.565, zEnd = GLARE.z - GLARE.r;
     const segs = [];   // caminho no plano do painel: (y, z) por comprimento de arco
     const pathPt = (t) => {   // t: -1..1 de ponta a ponta
       const L0 = GLARE.z - GLARE.r - zEnd, La = GLARE.r * Math.PI / 2, Lc = GLARE.yc, tot = L0 + La + Lc;
@@ -730,10 +729,10 @@ const SHELL_GLSL = `
 float xws(float z) { return 1.29 - (z - 0.245) * 0.53; }
 float glareEdge(float y) { float d = abs(y) - ${GLARE.yc.toFixed(4)}; return d <= 0.0 ? ${GLARE.z.toFixed(4)} : ${(GLARE.z - GLARE.r).toFixed(4)} + sqrt(max(${(GLARE.r * GLARE.r).toFixed(6)} - d * d, 0.0)); }
 float zbase(float y) { return glareEdge(y) - 0.006; }
-float xw(float y, float z) {
-    float sw = smoothstep(0.18, 0.565, abs(y)), t = smoothstep(zbase(y), 0.80, z);
-    return xws(max(z, zbase(y))) - 0.30 * sw * t;
-}
+float xpil(float z) { return 1.13 - (z - 0.10) * 0.42; }
+float xw(float y, float z) { return mix(xws(max(z, zbase(y))), xpil(z), smoothstep(0.22, 0.565, abs(y))); }
+// cantos de cima do painel (recortados na textura): fora da mascara e da sombra tambem
+bool panelCut(vec3 p) { return abs(p.x - ${PANEL.PX.toFixed(3)}) < 0.002 && p.z > glareEdge(p.y) - 0.004; }
 float sdRR(vec2 p, vec2 c, vec2 h, float r) { vec2 q = abs(p - c) - h + r; return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r; }
 // pedaco do capo que cairia dentro da cabine (recortado em todas as passadas)
 bool cowlInside(vec3 p) { return p.x < xw(p.y, p.z) + 0.003 && abs(p.y) < 0.566 && p.z < 0.8; }
@@ -900,7 +899,7 @@ out vec4 oD;
 ${SHELL_GLSL}
 void main() {
     int mt = int(vMat + 0.5);
-    if ((mt == 2 && shellOpen(vPos) < 0.0) || (mt == 10 && cowlInside(vPos))) discard;
+    if ((mt == 2 && shellOpen(vPos) < 0.0) || (mt == 10 && cowlInside(vPos)) || (mt == 1 && panelCut(vPos))) discard;
     oD = vec4(length(vPos - uEye), 0.0, 0.0, 1.0);
 }`;
 
@@ -917,7 +916,7 @@ in vec3 vPos;
 in float vMat;
 out vec4 o;
 ${SHELL_GLSL}
-void main() { int mt = int(vMat + 0.5); if ((mt == 2 && shellOpen(vPos) < 0.0) || (mt == 10 && cowlInside(vPos))) discard; o = vec4(1.0); }`;
+void main() { int mt = int(vMat + 0.5); if ((mt == 2 && shellOpen(vPos) < 0.0) || (mt == 10 && cowlInside(vPos)) || (mt == 1 && panelCut(vPos))) discard; o = vec4(1.0); }`;
 
 // marca, no G-buffer da cena (baixa resolucao), os pixels que a cabine cobre por inteiro:
 // profundidade 0 (o raymarching depois e pulado pelo teste de profundidade) e tipo 7
@@ -1082,14 +1081,25 @@ export class Cabin {
     // mao direita: vai mexer na alavanca dos flaps ou na roda do trim e depois volta para a manete
     this.clock = (this.clock || 0) + this.dt;   // relogio proprio (passo limitado): igual ao real a 60 fps
     const tk = this.clock * 1000;
-    if (this.lastLever === undefined) { this.lastLever = st.lever; this.lastTrim = st.trim; this.leverT = this.trimT = 0; }
-    if (st.lever !== this.lastLever) { this.lastLever = st.lever; this.leverT = tk + 1500; }
+    // alavanca dos flaps: a mao vai rapido ate ela; a alavanca so muda quando a mao chega e,
+    // logo em seguida, a mao volta (o motor dos flaps continua trabalhando sozinho)
+    if (this.leverVis === undefined) { this.leverVis = this.leverPos = st.lever; this.lastTrim = st.trim; this.trimT = this.holdT = 0; this.leverWait = 0; }
     if (Math.abs(st.trim - this.lastTrim) > 1e-5) this.trimT = tk + 900;
     this.lastTrim = st.trim;
-    const want = tk < this.trimT ? 'trim' : tk < this.leverT ? 'lever' : 'thr';
+    const pending = st.lever !== this.leverVis;
+    let want = 'thr';
+    if (pending) {
+      want = 'lever';
+      this.leverWait += this.dt;
+      const at = handTarget('lever', { ...st, lever: this.leverPos });
+      if (len(sub(this.hand || at, at)) < 0.02 || this.leverWait > 0.6) { this.leverVis = st.lever; this.holdT = tk + 220; this.leverWait = 0; }
+    } else if (tk < this.holdT) want = 'lever';
+    else if (tk < this.trimT) want = 'trim';
+    this.leverPos += (this.leverVis - this.leverPos) * (1 - Math.exp(-this.dt * 18));   // a alavanca desliza com a mao
+    st.lever = this.leverPos;
     const tgt = handTarget(want, st);
     if (!this.hand) this.hand = tgt;
-    const kh = 1 - Math.exp(-this.dt * 8);
+    const kh = 1 - Math.exp(-this.dt * (want === 'thr' ? 9 : 14));
     this.hand = add(this.hand, mul(sub(tgt, this.hand), kh));
     st.hand = this.hand;
     this.M = partMatrices(st);

@@ -43,6 +43,9 @@ uniform vec4 uPB[66];      // caixas do aviao: 3 vec4 por caixa
 uniform int uNPB;
 uniform vec3 uPal[6];      // ceu topo, ceu horizonte, nevoa, luz, sombra, sol
 uniform float uNight;      // 1 = noite de lua
+uniform highp sampler2DShadow uPSh;   // mapa de sombra do aviao (malha, ver cabin.js), no referencial do aviao
+uniform mat4 uPShM;
+uniform float uPShOn;
 uniform vec4 uLand;        // farol de pouso: posicao (mundo) e intensidade (0 = apagado)
 uniform vec3 uLandDir;
 
@@ -458,6 +461,21 @@ vec3 shadeBox(int bi, vec3 p, vec3 n, vec3 ro, out int kind) {
     return c + landLight(p, n, base);
 }
 
+// sombra do aviao (forma de verdade) no chao e na agua
+float planeShadow(vec3 p) {
+    if (uPShOn < 0.5) return 1.0;
+    vec3 r = p - uPPos;
+    r.xy = vec2(wrapf(r.x), wrapf(r.y));
+    if (dot(r.xy, r.xy) > 4.0e6) return 1.0;
+    vec4 s = uPShM * vec4(dot(r, uPF), dot(r, uPR), dot(r, uPU), 1.0);
+    vec3 q = s.xyz * 0.5 + 0.5;
+    if (q.x < 0.0 || q.y < 0.0 || q.x > 1.0 || q.y > 1.0) return 1.0;
+    vec2 o = 0.8 / vec2(textureSize(uPSh, 0));
+    float z = min(q.z, 1.0);
+    return 0.25 * (texture(uPSh, vec3(q.xy + vec2(-o.x, -o.y), z)) + texture(uPSh, vec3(q.xy + vec2(o.x, -o.y), z))
+                 + texture(uPSh, vec3(q.xy + vec2(-o.x, o.y), z)) + texture(uPSh, vec3(q.xy + vec2(o.x, o.y), z)));
+}
+
 vec3 shadeLand(vec3 p, float t, bool primary, out float mat) {
     float fp = t * uPix;   // tamanho do pixel no chao
     vec4 toon = textureLod(uToon, texUV(p.xy), lodAt(t));
@@ -469,14 +487,7 @@ vec3 shadeLand(vec3 p, float t, bool primary, out float mat) {
     vec2 sa = shAO(p.xy, t);
     float sh = sa.r;
     if (t < 2500.0 && boxShadow(p)) sh = 0.0;
-    if (primary && uDrawPlane == 1) {
-        float k = (uPPos.z - p.z) / uSun.z;
-        float sx = uPPos.x - uSun.x * k, sy = uPPos.y - uSun.y * k;
-        if (k > 0.0 && abs(wrapf(sx - p.x)) < 9.0 && abs(wrapf(sy - p.y)) < 9.0) {
-            float tt; vec3 nn, cc;
-            if (planeHit(p, uSun, k + 20.0, false, tt, nn, cc)) sh = 0.0;
-        }
-    }
+    if (primary && uDrawPlane == 1) sh *= planeShadow(p);
     if (uClouds == 1) {
         float k = (CLOUD_Z - p.z) / uSun.z;
         if (k > 0.0 && cloudDensity(p.x + uSun.x * k, p.y + uSun.y * k) > 0.3) sh *= 0.35;
@@ -522,6 +533,7 @@ vec3 shadeWater(vec3 p, vec3 rd, float t) {
     float depth = -terH(p.xy);
     vec3 body = mix(vec3(0.30, 0.78, 0.80), vec3(0.10, 0.38, 0.66), smoothstep(0.5, 12.0, depth)) * mix(1.0, 0.22, uNight);
     float sh = shAO(p.xy, t).r;
+    if (uDrawPlane == 1) sh *= planeShadow(p);
     if (sh < 0.5) body *= mix(uPal[4], vec3(1.0), 0.35);
     float cosi = max(-dot(rd, n), 0.0);
     float F = 0.08 + 0.6 * pow(1.0 - cosi, 4.0);
@@ -550,12 +562,8 @@ void main() {
     int hit = march(ro, rd, uViewDist, th, box, bn);
     float tp; vec3 pn, pc;
     vec3 col; float t = 1e9; int kind = GK_SKY; float mat = 0.0;
-    if (uDrawPlane == 1 && uCockpit == 0 && planeHit(ro, rd, hit != 0 ? th : uViewDist, false, tp, pn, pc)) {   // na cabine o aviao e malha (cabin.js)
-        vec3 p = ro + rd * tp;
-        float sh = p.z < terH(p.xy) + 40.0 ? shAO(p.xy, 0.0).r : 1.0;
-        col = fogC(celLight(pc, max(dot(pn, uSun), 0.0) + 0.15, sh), tp);
-        t = tp; kind = GK_PLANE;
-    } else if (hit == 0) {
+    // o aviao em si e uma malha desenhada depois, na resolucao da tela (cabin.js)
+    if (hit == 0) {
         col = sky(ro, rd, kind);
     } else {
         t = th;
@@ -744,7 +752,8 @@ void main() {
 export const FX_FS = `#version 300 es
 precision highp float;
 precision highp sampler2D;
-uniform sampler2D uG;
+uniform sampler2D uG, uA;   // G-buffer do mundo (baixa resolucao) e distancia da malha do aviao (tela)
+uniform vec2 uOrigin, uGS;
 uniform vec3 uSun, uCamF, uCamR, uCamU, uLight, uShade;
 in vec2 vC;
 in vec4 vQ;
@@ -762,7 +771,10 @@ void main() {
     float nz = sqrt(max(0.0, 1.0 - rr * rr));
     // profundidade da superficie do balao e teste suave contra a cena
     float depth = vDist - vR * nz;
-    float sceneT = texelFetch(uG, ivec2(gl_FragCoord.xy), 0).x;
+    vec2 sp = gl_FragCoord.xy - uOrigin;
+    float sceneT = texelFetch(uG, ivec2(sp * uGS), 0).x;
+    float meshT = texelFetch(uA, ivec2(sp), 0).w;          // o destroco tambem esconde o que esta atras
+    if (meshT > 0.0) sceneT = min(sceneT, meshT);
     float soft = clamp((sceneT - depth) / (0.35 * vR + 0.3), 0.0, 1.0);
     if (soft <= 0.0) discard;
     float fw = max(fwidth(rr), 1e-3);

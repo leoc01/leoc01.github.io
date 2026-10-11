@@ -1,6 +1,7 @@
 // voo.js - pagina do jogo: gera o mundo (Web Workers), liga GPU, teclado, controle e som.
 import { instantiate } from './wasm.js';
 import { Renderer } from './renderer.js';
+import { MenuUI } from './menu.js';
 import { buildGraph, NSRC, OUT_CHANNELS } from './spatial.js';
 
 const SEED = 2026;
@@ -191,6 +192,7 @@ async function main() {
   let tPrev = performance.now() / 1000, last = 0, fpsN = 0, fpsT = tPrev;
   const info = () => new Float32Array(w.memory.buffer, w.voo_info(), 96);
   let iw = 0, ih = 0, vrowsPrev = 30;
+  const menuUI = new MenuUI(w);
   const frame = (now) => {
     requestAnimationFrame(frame);
     const t = now / 1000;
@@ -231,6 +233,7 @@ async function main() {
     const fx = new Float32Array(w.memory.buffer, w.voo_fx(), nfx * 8);
     const cells = new Uint32Array(w.memory.buffer, cp, cols * rows * 3);
     renderer.frame({ info: I, points, npts, fx, nfx, cells, cols, rows, vrows: vrowsPrev, iw, ih, smooth });
+    menuUI.update(I[65] > 0 && started);
     sound.pump(I);
 
     fpsN++;

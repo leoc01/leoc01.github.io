@@ -39,12 +39,14 @@ const COL = {
   carpet: hex('#4a3d37'), leather: hex('#2b292d'), black: hex('#19191c'), dark: hex('#2e2d31'), chrome: hex('#b9bcc2'),
   white: hex('#eeeeea'), redExt: hex('#c72a24'), blue: hex('#29408c'), tyre: hex('#111111'),
   shirt: hex('#9fb9d4'), skin: hex('#d9a582'), jeans: hex('#34486b'), shoe: hex('#3a2a20'), knobRed: hex('#c2241c'),
-  green: hex('#2fd04a'), navRed: hex('#ff2a1a'), yellow: hex('#f2c230'),
+  green: hex('#2fd04a'), navRed: hex('#ff2a1a'), yellow: hex('#f2c230'), wine: hex('#8f2621'), gold: hex('#c9a24a'),
+  hair: hex('#3b2a20'), headset: hex('#56603f'),
 };
 // materiais (o shader decide a luz): 0 interior liso, 1 textura do painel, 2 casco (janelas e
 // zonas de cor), 3 tecido dos bancos, 4 disco da helice, 5 exterior, 6 cromado, 7 vidro das janelas
 // (copia do casco, so onde ha janela), 8 vidro do para-brisa
-const M_IN = 0, M_TEX = 1, M_SHELL = 2, M_SEAT = 3, M_PROP = 4, M_EXT = 5, M_CHROME = 6, M_GLASS = 7, M_WSHIELD = 8, M_NAV = 9, M_COWL = 10;
+const M_IN = 0, M_TEX = 1, M_SHELL = 2, M_SEAT = 3, M_PROP = 4, M_EXT = 5, M_CHROME = 6, M_GLASS = 7, M_WSHIELD = 8, M_NAV = 9, M_COWL = 10,
+  M_SKIN = 11, M_LIVERY = 12;   // 11: pele de fora da fuselagem (janelas recortadas); 10-12 levam a pintura (faixa vinho e filete dourado)
 const VF = 13;   // floats por vertice: pos3 normal3 cor3 material uv2 oclusao
 
 // ---------------------------------------------------------------------------
@@ -459,8 +461,8 @@ function buildExterior(m) {
   const white = COL.white;
   // ----- capo: forma afinando ate o spinner -----
   {
-    const st = [[1.22, 0.25, 0.575, -0.30], [1.75, 0.262, 0.555, -0.32], [2.20, 0.255, 0.515, -0.30], [2.55, 0.205, 0.445, -0.25],
-                [2.78, 0.150, 0.355, -0.20], [2.93, 0.105, 0.27, -0.16]];
+    const st = [[1.22, 0.25, 0.578, -0.56], [1.75, 0.262, 0.555, -0.50], [2.20, 0.255, 0.515, -0.42], [2.55, 0.205, 0.445, -0.33],
+                [2.78, 0.150, 0.355, -0.25], [2.93, 0.105, 0.27, -0.19]];
     const at = (x) => {
       let i = 0; while (i < st.length - 2 && x > st[i + 1][0]) i++;
       const a = st[i], b = st[i + 1], t = clamp((x - a[0]) / (b[0] - a[0]), 0, 1), s = t * t * (3 - 2 * t);
@@ -469,19 +471,26 @@ function buildExterior(m) {
     const U = [], A = [];
     U.push(1.22, 1.26); for (let x = 1.30; x < 2.93; x += 0.1) U.push(x);
     U.push(2.93);
-    for (let k = 0; k <= 24; k++) A.push(-1.9 + 3.8 * k / 24);
-    m.surf(U, A, (x, a) => {
+    for (let k = 0; k <= 32; k++) A.push(-Math.PI + 2 * Math.PI * k / 32);
+    const cowlPt = (x, a) => {
       const [top, hw, bot] = at(x), cz = (top + bot) / 2, hz = (top - bot) / 2;
-      const s = Math.sin(a), c = Math.cos(a), e = 2 / 3.2;
+      const s = Math.sin(a), c = Math.cos(a), e = 2 / (3.2 + 3.5 * (1 - sstep(1.22, 2.3, x)));   // atras mais quadrado (encosta no para-brisa)
       return [x, hw * Math.sign(s) * Math.abs(s) ** e, cz + hz * Math.sign(c) * Math.abs(c) ** e];
-    }, { col: (p) => (Math.abs(p[1]) < 0.012 && p[0] > 1.5 ? COL.creamDk : white), mat: M_COWL, ref: (p) => [p[0], 0, 0.0] });
+    };
+    m.surf(U, A, cowlPt, { col: (p) => (Math.abs(p[1]) < 0.012 && p[0] > 1.5 && p[2] > 0 ? COL.creamDk : white), mat: M_COWL, ref: (p) => [p[0], 0, at(p[0])[2] / 2 + at(p[0])[0] / 2] });
+    // frente do capo (grade escura) com as duas entradas de ar
+    const cb = m.n;
+    m.vert([2.935, 0, -0.04], [1, 0, 0], COL.dark, M_EXT);
+    for (const a of A) m.vert(cowlPt(2.93, a), [1, 0, 0], COL.dark, M_EXT);
+    for (let k = 0; k < A.length - 1; k++) m.i.push(cb, cb + 1 + k, cb + 2 + k);
+    for (const s of [-1, 1]) m.rbox([2.94, s * 0.155, -0.03], IDENT, [0.006, 0.085, 0.05], 0.03, { col: COL.black, mat: M_EXT });
     // spinner vermelho
     const prof = [];
     for (let k = 0; k <= 6; k++) {
       const t = k / 6, f = t * Math.PI / 2;
       prof.push({ s: 0.36 * Math.sin(f), r: 0.17 * Math.cos(f) + 1e-4, ns: Math.sin(f) * 0.6, nr: Math.cos(f) });
     }
-    m.lathe([2.92, 0, 0.02], [3.3, 0, 0.02], prof, 18, { col: COL.redExt, mat: M_EXT });
+    m.lathe([2.92, 0, 0.02], [3.3, 0, 0.02], prof, 18, { col: COL.wine, mat: M_EXT });
   }
   // ----- asas: parte fixa ate a articulacao + pontas vermelhas + nervura central -----
   for (const s of [-1, 1]) {
@@ -490,7 +499,7 @@ function buildExterior(m) {
     // pedacos fixos atras da articulacao (entre flap e aileron, e na ponta)
     m.extrude(wingProf.mov, ys(FLAP_Y[1], AIL_Y[0], 1), { col: white, mat: M_EXT, closed: true });
     m.extrude(wingProf.mov, ys(AIL_Y[1], TIP_Y, 1), { col: white, mat: M_EXT, closed: true });
-    m.extrude(wingProf.full, ys(TIP_Y, SPAN, 2), { col: COL.redExt, mat: M_EXT, closed: true, caps: [[s * SPAN, s]] });
+    m.extrude(wingProf.full, ys(TIP_Y, SPAN, 2), { col: COL.wine, mat: M_EXT, closed: true, caps: [[s * SPAN, s]] });
     // luz de navegacao na ponta
     m.rbox([0.95, s * (SPAN + 0.02), 0.90], IDENT, [0.05, 0.02, 0.02], 0.015, { col: s < 0 ? COL.navRed : COL.green, mat: M_NAV });
     // montante (perfil achatado) da fuselagem ate a asa
@@ -504,7 +513,7 @@ function buildExterior(m) {
   }
   // ----- cone de cauda, estabilizador, deriva -----
   {
-    const st = [[X_AFT, 0.62, 0.575, -0.56], [-2.6, 0.60, 0.48, -0.40], [-3.6, 0.55, 0.33, -0.15], [-4.6, 0.48, 0.18, 0.08], [-5.30, 0.43, 0.06, 0.24]];
+    const st = [[X_AFT, 0.58, 0.483, -0.56], [-2.6, 0.585, 0.43, -0.40], [-3.6, 0.55, 0.33, -0.15], [-4.6, 0.48, 0.18, 0.08], [-5.30, 0.43, 0.06, 0.24]];
     const at = (x) => {
       let i = 0; while (i < st.length - 2 && x < st[i + 1][0]) i++;
       const a = st[i], b = st[i + 1], t = clamp((x - a[0]) / (b[0] - a[0]), 0, 1);
@@ -513,11 +522,12 @@ function buildExterior(m) {
     const U = [], A = [];
     for (let k = 0; k <= 10; k++) U.push(lerp(X_AFT, -5.30, k / 10));
     for (let k = 0; k <= 24; k++) A.push(k / 24 * Math.PI * 2);
+    // mesma secao da fuselagem (sem degrau na emenda), com os raios diminuindo ate a cauda
     const shape = (x, a) => {
-      const [top, hw, bot] = at(x), cz = (top + bot) / 2, hz = (top - bot) / 2, s = Math.sin(a), c = Math.cos(a), e = 2 / 3;
-      return [x, hw * Math.sign(s) * Math.abs(s) ** e, cz + hz * Math.sign(c) * Math.abs(c) ** e];
+      const [top, hw, bot] = at(x), k = clamp((x - -5.3) / (X_AFT - -5.3), 0, 1);
+      return rrSection(x, hw, top, bot, 0.06 + 0.16 * k, 0.05 + 0.11 * k, a / (Math.PI * 2) + 0.75);
     };
-    m.surf(U, A, shape, { col: (p) => (p[2] > -0.18 && p[2] < 0.02 ? COL.blue : white), mat: M_EXT, ref: (p) => [p[0], 0, at(p[0])[1] / 2 + at(p[0])[2] / 2] });
+    m.surf(U, A, shape, { col: white, mat: M_LIVERY, ref: (p) => [p[0], 0, at(p[0])[0] / 2 + at(p[0])[2] / 2] });
     const cb = m.n;   // tampa da frente (aparece pela janela de tras)
     m.vert([X_AFT, 0, 0.03], [1, 0, 0], white, M_EXT);
     for (let k = 0; k <= 24; k++) m.vert(shape(X_AFT, k / 24 * Math.PI * 2), [1, 0, 0], white, M_EXT);
@@ -529,11 +539,90 @@ function buildExterior(m) {
     for (const sy of [-1, 1]) {   // deriva como duas faces + borda (fina)
       const P = fin.map(([x, z]) => [x, sy * 0.04, z]);
       const b = m.n;
-      for (const p of P) m.vert(p, [0, sy, 0], COL.blue, M_EXT);
+      for (const p of P) m.vert(p, [0, sy, 0], white, M_LIVERY);
       m.i.push(b, b + 1, b + 2, b, b + 2, b + 3);
     }
-    m.extrude([[-4.15, 0.45], [-4.95, 1.95], [-5.25, 1.95]], [-0.04, 0.04], { col: COL.blue, mat: M_EXT, ref: [-4.9, 1.0] });
+    m.extrude([[-4.15, 0.45], [-4.95, 1.95], [-5.25, 1.95]], [-0.04, 0.04], { col: white, mat: M_LIVERY, ref: [-4.9, 1.0] });
   }
+}
+
+// ----- so de fora: pele da fuselagem, trem de pouso, escapamento, cabeca do piloto -----
+const SKIN_BOT = -0.56;
+const skinTop = (x) => x > -0.45 ? 0.865 : lerp(0.58, 0.865, sstep(X_AFT, -0.45, x));
+function skinPoint(x, s) { return rrSection(x, halfW(x) + 0.013, skinTop(x), SKIN_BOT, 0.22, 0.16, s); }
+// secao de retangulo arredondado (largura w, topo r, fundo f, raios de baixo e de cima), por comprimento de arco s
+function rrSection(x, w, r, f, rb, rt, s) {
+  rb = Math.min(rb, w - 1e-3, (r - f) / 2 - 1e-3); rt = Math.min(rt, w - 1e-3, (r - f) / 2 - 1e-3);
+  const segs = [
+    ['l', [0, f], [w - rb, f]], ['a', [w - rb, f + rb], rb, -Math.PI / 2, 0], ['l', [w, f + rb], [w, r - rt]],
+    ['a', [w - rt, r - rt], rt, 0, Math.PI / 2], ['l', [w - rt, r], [-(w - rt), r]], ['a', [-(w - rt), r - rt], rt, Math.PI / 2, Math.PI],
+    ['l', [-w, r - rt], [-w, f + rb]], ['a', [-(w - rb), f + rb], rb, Math.PI, Math.PI * 1.5], ['l', [-(w - rb), f], [0, f]],
+  ];
+  const L = segs.map((g) => g[0] === 'l' ? Math.hypot(g[2][0] - g[1][0], g[2][1] - g[1][1]) : g[2] * (g[4] - g[3]));
+  let d = (((s % 1) + 1) % 1) * L.reduce((a, b) => a + b, 0);
+  for (let i = 0; i < segs.length; i++) {
+    if (d <= L[i] || i === segs.length - 1) {
+      const g = segs[i], t = L[i] > 0 ? Math.min(d / L[i], 1) : 0;
+      if (g[0] === 'l') return [x, lerp(g[1][0], g[2][0], t), lerp(g[1][1], g[2][1], t)];
+      const a = lerp(g[3], g[4], t);
+      return [x, g[1][0] + g[2] * Math.cos(a), g[1][1] + g[2] * Math.sin(a)];
+    }
+    d -= L[i];
+  }
+  return [x, 0, f];
+}
+function buildOutside(m) {
+  const U = [];
+  for (let x = X_AFT; x < 1.24 - 1e-6; x += 0.08) U.push(x);
+  U.push(1.24);
+  const S = []; for (let k = 0; k <= 64; k++) S.push(k / 64);
+  m.surf(U, S, skinPoint, { col: COL.white, mat: M_SKIN, ref: (p) => [p[0], 0, 0.15] });
+  // trem principal: molas achatadas, rodas e carenagens
+  const flat = (a, b, wx, wy, col) => {
+    const ax = norm(sub(b, a)), side = norm(cross(ax, [1, 0, 0])), Ls = len(sub(b, a)), T = [], A = [];
+    for (let k = 0; k <= 4; k++) T.push(k / 4);
+    for (let k = 0; k <= 12; k++) A.push(k / 12 * Math.PI * 2);
+    m.surf(T, A, (t, g) => add(add(a, mul(ax, t * Ls)), add(mul([1, 0, 0], wx * Math.cos(g)), mul(side, wy * Math.sin(g)))),
+      { col, mat: M_EXT, ref: (p) => add(a, mul(ax, dot(sub(p, a), ax))) });
+  };
+  const wheel = (c, r, w) => {
+    m.cyl([c[0], c[1] - w, c[2]], [c[0], c[1] + w, c[2]], r, { col: COL.tyre, mat: M_EXT }, 20);
+    m.cyl([c[0], c[1] - w - 0.004, c[2]], [c[0], c[1] + w + 0.004, c[2]], r * 0.42, { col: COL.chrome, mat: M_EXT }, 14);
+  };
+  // carenagem da roda em gota: secao eliptica, mais gorda na frente e afinando atras
+  const pant = (c, hx, hy, hz) => {
+    const T = [], A = [];
+    for (let k = 0; k <= 14; k++) T.push(k / 14);
+    for (let k = 0; k <= 18; k++) A.push(k / 18 * Math.PI * 2);
+    m.surf(T, A, (t, a) => {
+      const f = t < 0.35 ? Math.sqrt(Math.sin(Math.PI * t / 0.7)) : 1 - 0.8 * ((t - 0.35) / 0.65) ** 1.5;
+      return [c[0] + hx - 2 * hx * t, c[1] + hy * f * Math.cos(a), c[2] + hz * f * Math.sin(a) + 0.03 * (t - 0.5)];
+    }, { col: COL.white, mat: M_LIVERY, ref: (p) => [p[0], c[1], c[2]] });
+  };
+  for (const s of [-1, 1]) {
+    flat([-0.05, s * 0.40, SKIN_BOT + 0.04], [-0.12, s * 1.15, -0.93], 0.05, 0.016, COL.white);
+    wheel([-0.12, s * 1.22, -0.99], 0.21, 0.065);
+    pant([-0.09, s * 1.22, -0.93], 0.37, 0.09, 0.19);
+  }
+  // trem do nariz: perna com amortecedor cromado, roda e carenagem
+  m.cyl([2.18, 0, -0.40], [2.24, 0, -0.74], 0.04, { col: COL.white, mat: M_EXT }, 10);
+  m.cyl([2.24, 0, -0.74], [2.28, 0, -0.92], 0.026, { col: COL.chrome, mat: M_CHROME }, 10);
+  wheel([2.29, 0, -1.03], 0.17, 0.05);
+  pant([2.31, 0, -0.98], 0.30, 0.07, 0.15);
+  // escapamento embaixo do capo, a direita
+  m.cyl([2.50, 0.20, -0.36], [2.60, 0.24, -0.50], 0.028, { col: COL.dark, mat: M_EXT }, 10);
+  // farol rotativo no alto da deriva
+  m.rbox([-5.06, 0, 1.975], IDENT, [0.045, 0.03, 0.028], 0.022, { col: hex('#c0281c'), mat: M_EXT });
+}
+// cabeca do piloto (so de fora: de dentro a camera esta nela), com fone de ouvido verde
+function buildHead(m) {
+  const c = [0.415, -0.27, 0.50];
+  m.rbox(c, IDENT, [0.10, 0.082, 0.115], 0.08, { col: COL.skin });
+  m.rbox([c[0] - 0.03, c[1], c[2] + 0.04], IDENT, [0.088, 0.086, 0.085], 0.075, { col: COL.hair });
+  for (const s of [-1, 1]) m.cyl([c[0] - 0.01, c[1] + s * 0.08, c[2] - 0.005], [c[0] - 0.01, c[1] + s * 0.115, c[2] - 0.005], 0.045, { col: COL.headset }, 14);
+  m.capsule([c[0] - 0.01, c[1] - 0.10, c[2] + 0.02], [c[0] - 0.01, c[1], c[2] + 0.125], 0.012, { col: COL.black }, 6);
+  m.capsule([c[0] - 0.01, c[1] + 0.10, c[2] + 0.02], [c[0] - 0.01, c[1], c[2] + 0.125], 0.012, { col: COL.black }, 6);
+  m.capsule([c[0] - 0.01, c[1] - 0.115, c[2] - 0.02], [c[0] + 0.10, c[1] - 0.04, c[2] - 0.07], 0.007, { col: COL.black }, 6);
 }
 
 // ---------------------------------------------------------------------------
@@ -650,7 +739,7 @@ function buildParts() {
     { col: COL.white, mat: M_EXT, closed: true, caps: [[-1.70, -1], [1.70, 1]] }));
   const rprof = [[-5.25, 0.035], [-5.45, 0.012], [-5.52, 0.0], [-5.45, -0.012], [-5.25, -0.035]];
   part('rud', 'ext', (m) => m.extrude(rprof, [0.40, 1.98], {
-    col: COL.blue, mat: M_EXT, closed: true, caps: [[1.98, 1]], map: (p) => [p[0], p[2], p[1]], mapN: (n) => [n[0], n[2], n[1]] }));
+    col: COL.white, mat: M_LIVERY, closed: true, caps: [[1.98, 1]], map: (p) => [p[0], p[2], p[1]], mapN: (n) => [n[0], n[2], n[1]] }));
   return parts;
 }
 
@@ -735,7 +824,7 @@ float xw(float y, float z) { return mix(xws(max(z, zbase(y))), xpil(z), smoothst
 bool panelCut(vec3 p) { return abs(p.x - ${PANEL.PX.toFixed(3)}) < 0.002 && p.z > glareEdge(p.y) - 0.004; }
 float sdRR(vec2 p, vec2 c, vec2 h, float r) { vec2 q = abs(p - c) - h + r; return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r; }
 // pedaco do capo que cairia dentro da cabine (recortado em todas as passadas)
-bool cowlInside(vec3 p) { return p.x < xw(p.y, p.z) + 0.003 && abs(p.y) < 0.566 && p.z < 0.8; }
+bool cowlInside(vec3 p) { return p.x < xw(p.y, p.z) + 0.003 && abs(p.y) < 0.566 && p.z < 0.8 && p.z > zbase(p.y) - 0.03; }
 // distancia (m) ate a abertura mais proxima: < 0 = janela (recortada)
 float shellOpen(vec3 p) {
     float d = 1.0;
@@ -758,6 +847,7 @@ layout(location = 4) in vec2 aUV;
 layout(location = 5) in float aAO;
 uniform vec3 uEye, uVF, uVR, uVU;   // olho e eixos da camera, no referencial do aviao
 uniform float uTanX, uHW;
+uniform vec2 uNF;                   // planos perto e longe (de fora a camera fica longe)
 uniform mat4 uModel;                // parte movel (manche, flaps...): rotacao + translacao
 out vec3 vPos, vNrm, vCol;
 out vec2 vUV;
@@ -766,7 +856,7 @@ void main() {
     vec3 P = (uModel * vec4(aPos, 1.0)).xyz;
     vec3 d = P - uEye;
     float x = dot(d, uVR), y = dot(d, uVU), z = dot(d, uVF);
-    const float n = 0.02, f = 60.0;
+    float n = uNF.x, f = uNF.y;
     gl_Position = vec4(x / uTanX, y / (uTanX * uHW), z * (f + n) / (f - n) - 2.0 * f * n / (f - n), z);
     vPos = P; vNrm = mat3(uModel) * aNrm; vCol = aCol; vUV = aUV; vMat = aMat; vAO = aAO;
 }`;
@@ -780,6 +870,7 @@ in float vMat, vAO;
 uniform vec3 uEye, uSunB, uLight, uShade;
 uniform float uSunUp, uProp, uSweep;
 uniform float uPanelLight, uNavOn;   // luzes do painel (0..1) e de navegacao acesas
+uniform float uOutside, uBurnt;      // camera fora do aviao; destroco queimado
 uniform mat4 uShM;
 uniform sampler2DShadow uShadow;
 uniform sampler2D uAtlas;
@@ -817,17 +908,30 @@ vec3 shellColor(vec3 p, vec3 n) {
     c = mix(c, vec3(0.13, 0.13, 0.14), 1.0 - smoothstep(0.018, 0.018 + max(fwidth(d), 1e-4), d));
     return c;
 }
+// pintura: branco com faixa vinho e filete dourado que sobem para a cauda; topo da deriva vinho
+vec3 livery(vec3 p, vec3 base) {
+    float zc = -0.13 + max(0.0, -1.2 - p.x) * 0.11;
+    float d = p.z - zc, aa = max(fwidth(p.z), 1e-4);
+    float band = 1.0 - smoothstep(0.055, 0.055 + aa, abs(d));
+    float gold = 1.0 - smoothstep(0.0065, 0.0065 + aa, abs(d - 0.078));
+    if (p.x < -4.05 && p.z > 0.47) {   // deriva e leme
+        float f = p.z + (p.x + 4.9) * 0.18;
+        band = smoothstep(1.62, 1.62 + aa, f);
+        gold = 1.0 - smoothstep(0.008, 0.008 + aa, abs(f - 1.575));
+    }
+    return mix(mix(base, vec3(0.56, 0.15, 0.13), band), vec3(0.79, 0.64, 0.29), gold);
+}
 void main() {
     int mat = int(vMat + 0.5);
     vec3 V = normalize(uEye - vPos);
     vec3 n = normalize(vNrm);
     if (mat == 2 && shellOpen(vPos) < 0.0) discard;
-    if (mat == 10) {   // capo: o pedaco que cairia dentro da cabine some
-        if (cowlInside(vPos)) discard;
-        mat = 5;
-    }
+    bool paint = mat >= 10, skin = mat == 11;
+    if (mat == 10 && cowlInside(vPos)) discard;   // capo: o pedaco que cairia dentro da cabine some
+    if (skin && shellOpen(vPos) < 0.0) discard;   // pele de fora: as mesmas janelas
+    if (paint) mat = 5;
     if (mat == 7 || mat == 8) {   // vidro: um veu bem fraco, mais forte de raspao (Fresnel), e faixas de reflexo
-        if (mat == 7 && (shellOpen(vPos) >= 0.0 || vPos.x > xw(vPos.y, vPos.z) - 0.01)) discard;
+        if (mat == 7 && (shellOpen(vPos) >= 0.0 || (vPos.x > xw(vPos.y, vPos.z) - 0.01 && abs(vPos.y) < 0.5))) discard;   // nas paredes: tambem o pedaco lateral do para-brisa
         if (mat == 8) {   // recorta o para-brisa na secao arredondada da cabine
             float w = 0.565 - 0.14, zc = 0.80 - 0.14;
             if (vPos.z > zc && abs(vPos.y) > w && length(vec2(abs(vPos.y) - w, vPos.z - zc)) > 0.14) discard;
@@ -836,8 +940,15 @@ void main() {
         float fres = pow(1.0 - c, 4.0);
         float k = dot(vPos, vec3(1.1, 1.9, 3.1)) + dot(V, vec3(0.6, 1.3, 0.4));
         float streak = smoothstep(0.55, 1.0, sin(k * 2.2)) * smoothstep(0.3, 1.0, sin(k * 0.7 + 1.0));
+        float dayG = mix(0.2, 1.0, smoothstep(0.45, 0.9, dot(uLight, vec3(0.3, 0.5, 0.2))));
         float al = 0.025 + 0.22 * fres + 0.045 * streak * uSunUp;
-        vec3 col = mix(vec3(0.82, 0.88, 0.98), uLight, 0.5) * mix(0.2, 1.0, smoothstep(0.45, 0.9, dot(uLight, vec3(0.3, 0.5, 0.2))));
+        vec3 col = mix(vec3(0.82, 0.88, 0.98), uLight, 0.5) * dayG;
+        if (uOutside > 0.5) {   // de fora: vidro esverdeado escuro que reflete o ceu, o interior aparece de leve
+            vec3 r = reflect(-V, n);
+            vec3 skyc = mix(vec3(0.55, 0.68, 0.85), vec3(0.85, 0.92, 1.0), smoothstep(-0.1, 0.6, r.z)) * dayG;
+            al = 0.42 + 0.45 * fres + 0.12 * streak * uSunUp;
+            col = mix(vec3(0.08, 0.12, 0.14) * dayG, skyc, 0.35 + 0.55 * fres);
+        }
         oC = vec4(col * al, al);
         oA = vec4(0.0);
         return;
@@ -861,6 +972,18 @@ void main() {
     vec3 base = vCol;
     if (mat == 1) { vec4 t = texture(uAtlas, vUV); if (t.a < 0.5) discard; base = t.rgb; }
     else if (mat == 2) base = shellColor(vPos, normalize(vNrm));
+    else if (paint) {
+        base = livery(vPos, base);
+        if (skin) {   // borracha das janelas e vincos das portas, vistos de fora
+            float d = shellOpen(vPos);
+            base = mix(base, vec3(0.16, 0.16, 0.17), 1.0 - smoothstep(0.022, 0.022 + max(fwidth(d), 1e-4), d));
+            if (abs(vPos.y) > 0.4) {
+                float l = aaLine(vPos.x - 0.075, 0.003) * step(-0.36, vPos.z) * step(vPos.z, 0.80);
+                l = max(l, aaLine(vPos.z + 0.36, 0.003) * step(0.075, vPos.x) * step(vPos.x, 1.10));
+                base *= 1.0 - 0.4 * l;
+            }
+        }
+    }
     else if (mat == 3) {   // tecido com pregas
         float f = fract(vUV.x / 0.065);
         float seam = 1.0 - smoothstep(0.0, max(0.14, fwidth(vUV.x / 0.065) * 1.5), min(f, 1.0 - f));
@@ -885,6 +1008,7 @@ void main() {
         col = base * mix(amb, uLight, 0.35) + vec3(0.35) * smoothstep(0.2, 0.9, r.z) * mix(0.4, 1.0, uSunUp)
             + vec3(0.8) * pow(max(dot(r, uSunB), 0.0), 24.0) * sh;
     }
+    col *= mix(1.0, 0.22, uBurnt);
     oC = vec4(min(col, vec3(1.0)), 1.0);
     oA = vec4(n, length(vPos - uEye));
 }`;
@@ -899,7 +1023,7 @@ out vec4 oD;
 ${SHELL_GLSL}
 void main() {
     int mt = int(vMat + 0.5);
-    if ((mt == 2 && shellOpen(vPos) < 0.0) || (mt == 10 && cowlInside(vPos)) || (mt == 1 && panelCut(vPos))) discard;
+    if (((mt == 2 || mt == 11) && shellOpen(vPos) < 0.0) || (mt == 10 && cowlInside(vPos)) || (mt == 1 && panelCut(vPos))) discard;
     oD = vec4(length(vPos - uEye), 0.0, 0.0, 1.0);
 }`;
 
@@ -916,7 +1040,7 @@ in vec3 vPos;
 in float vMat;
 out vec4 o;
 ${SHELL_GLSL}
-void main() { int mt = int(vMat + 0.5); if ((mt == 2 && shellOpen(vPos) < 0.0) || (mt == 10 && cowlInside(vPos)) || (mt == 1 && panelCut(vPos))) discard; o = vec4(1.0); }`;
+void main() { int mt = int(vMat + 0.5); if (((mt == 2 || mt == 11) && shellOpen(vPos) < 0.0) || (mt == 10 && cowlInside(vPos)) || (mt == 1 && panelCut(vPos))) discard; o = vec4(1.0); }`;
 
 // marca, no G-buffer da cena (baixa resolucao), os pixels que a cabine cobre por inteiro:
 // profundidade 0 (o raymarching depois e pulado pelo teste de profundidade) e tipo 7
@@ -939,14 +1063,19 @@ void main() {
 // composicao na tela: contorno de desenho nas silhuetas, degraus de profundidade e quinas
 const COMPOSE_FS = `#version 300 es
 precision highp float;
-uniform sampler2D uC, uA;
-uniform vec2 uOrigin;
+uniform sampler2D uC, uA, uG;   // cabine/aviao (cor e normal+distancia) e G-buffer do mundo (baixa resolucao)
+uniform vec2 uOrigin, uGS;      // uGS: escala da tela para o G-buffer
 uniform int uLine;
 out vec4 oColor;
 void main() {
     ivec2 p = ivec2(gl_FragCoord.xy - uOrigin), sz = textureSize(uC, 0);
     vec4 c = texelFetch(uC, p, 0);
     vec4 a = texelFetch(uA, p, 0);
+    if (a.w > 0.0) {   // atras de um morro ou predio (vista de fora): o mundo esconde o aviao
+        vec4 g = texelFetch(uG, ivec2(vec2(p) * uGS), 0);
+        int k = int(g.y + 0.5);
+        if (k != 0 && k != 1 && k != 7 && g.x < a.w - 0.3) { oColor = vec4(0.0); return; }
+    }
     if (a.w > 0.0) {
         float edge = 0.0;
         ivec2 D[4] = ivec2[4](ivec2(1, 0), ivec2(-1, 0), ivec2(0, 1), ivec2(0, -1));
@@ -990,6 +1119,13 @@ export class Cabin {
     const pr = new Mesh();
     buildProp(pr);
     this.prop = this.upload(pr, gl.STATIC_DRAW);
+    const om = new Mesh();
+    buildOutside(om);
+    this.outsideMesh = this.upload(om, gl.STATIC_DRAW);
+    const hm = new Mesh();
+    buildHead(hm);
+    this.headMesh = this.upload(hm, gl.STATIC_DRAW);
+    this.outside = false;
     const gm = new Mesh();
     buildGlass(gm);
     this.glass = this.upload(gm, gl.STATIC_DRAW);
@@ -1044,6 +1180,7 @@ export class Cabin {
     const gl = this.gl, loc = p.u.uModel;
     gl.uniformMatrix4fv(loc, false, MAT_I);
     this.draw(this.stat);
+    if (this.outside) { this.draw(this.outsideMesh); this.draw(this.headMesh); }
     for (const q of this.parts) {
       if (q.group === 'body' && !this.body) continue;
       gl.uniformMatrix4fv(loc, false, this.M[q.name]);
@@ -1052,7 +1189,8 @@ export class Cabin {
   }
 
   // estado do quadro: painel, partes moveis, camera e sol no referencial do aviao, sombra
-  prepare(I, iw, ih) {
+  // outside: camera fora do aviao (externa, torre, acidente): o aviao inteiro, com pele e trem de pouso
+  prepare(I, iw, ih, outside) {
     const gl = this.gl, now = performance.now();
     this.dt = Math.min(Math.max((now - this.lastT) / 1000, 0.004), 0.1);
     this.lastT = now;
@@ -1063,7 +1201,14 @@ export class Cabin {
     const PF = [I[28], I[29], I[30]], PR = [I[31], I[32], I[33]], PU = [I[34], I[35], I[36]];
     const toB = (v) => [dot(v, PF), dot(v, PR), dot(v, PU)];
     this.vf = toB([I[3], I[4], I[5]]); this.vr = toB([I[6], I[7], I[8]]); this.vu = toB([I[9], I[10], I[11]]);
-    this.eye = [I[83], I[84], I[85]];
+    this.outside = !!outside;
+    if (outside) {   // olho no referencial do aviao a partir das posicoes no mundo
+      const d = [I[0] - I[25], I[1] - I[26], I[2] - I[27]];
+      this.eye = [dot(d, [I[28], I[29], I[30]]), dot(d, [I[31], I[32], I[33]]), dot(d, [I[34], I[35], I[36]])];
+    } else this.eye = [I[83], I[84], I[85]];
+    const de = len(this.eye);
+    this.nf = outside ? [Math.max(0.05, (de - 8) * 0.5), de + 12] : [0.02, 60];
+    this.burnt = I[38] > 0.5 ? 1 : 0;
     this.tanX = I[12]; this.hw = ih / iw;
     const sun = [I[20], I[21], I[22]];
     this.sunB = norm(toB(sun));
@@ -1076,13 +1221,17 @@ export class Cabin {
     this.sweep = Math.min(Math.max(I[73] / 60 * Math.PI * 2 * this.dt, 0), Math.PI);
     // olhando para tras o corpo do piloto some (o tronco gira junto com a cabeca)
     const yaw = Math.atan2(this.vf[1], this.vf[0]);
-    this.body = Math.abs(yaw) < 1.45;
+    this.body = outside || Math.abs(yaw) < 1.45;
     const st = { elev: I[78], ail: I[79], thr: I[80], lever: I[81], rud: I[82], flap: I[74] / 30, trim: I[75] };
     // mao direita: vai mexer na alavanca dos flaps ou na roda do trim e depois volta para a manete
     this.clock = (this.clock || 0) + this.dt;   // relogio proprio (passo limitado): igual ao real a 60 fps
     const tk = this.clock * 1000;
     // alavanca dos flaps: a mao vai rapido ate ela; a alavanca so muda quando a mao chega e,
     // logo em seguida, a mao volta (o motor dos flaps continua trabalhando sozinho)
+    // reinicio/cenario novo (o aviao pula): a alavanca ja vai para a posicao certa, sem a mao
+    const pp = [I[25], I[26], I[27]];
+    if (this.prevPos && Math.hypot(pp[0] - this.prevPos[0], pp[1] - this.prevPos[1], pp[2] - this.prevPos[2]) > 50) this.leverVis = undefined;
+    this.prevPos = pp;
     if (this.leverVis === undefined) { this.leverVis = this.leverPos = st.lever; this.lastTrim = st.trim; this.trimT = this.holdT = 0; this.leverWait = 0; }
     if (Math.abs(st.trim - this.lastTrim) > 1e-5) this.trimT = tk + 900;
     this.lastTrim = st.trim;
@@ -1105,7 +1254,7 @@ export class Cabin {
     this.M = partMatrices(st);
     // matriz da sombra: projecao ortografica ao longo do sol, ~8 m em volta da cabine
     const Ls = this.sunB, hint = Math.abs(Ls[2]) < 0.95 ? [0, 0, 1] : [1, 0, 0];
-    const lx = norm(cross(hint, Ls)), ly = cross(Ls, lx), C = [-0.3, 0, 0.3], E = 4.2, Dz = 9;
+    const lx = norm(cross(hint, Ls)), ly = cross(Ls, lx), C = [-1.15, 0, 0.3], E = 6.4, Dz = 12;   // o aviao inteiro (a sombra no chao vem daqui tambem)
     this.shM = new Float32Array([
       lx[0] / E, ly[0] / E, -Ls[0] / Dz, 0,
       lx[1] / E, ly[1] / E, -Ls[1] / Dz, 0,
@@ -1125,7 +1274,7 @@ export class Cabin {
     const p = this.progShadow;
     gl.useProgram(p);
     gl.uniformMatrix4fv(p.u.uShM, false, this.shM);
-    if (this.sunUp > 0) this.drawAll(p);
+    if (this.sunUp > 0) { const o = this.outside; this.outside = true; this.drawAll(p); this.outside = o; }   // sombra sempre do aviao inteiro
     gl.disable(gl.POLYGON_OFFSET_FILL);
     gl.disable(gl.DEPTH_TEST);
     gl.bindVertexArray(null);
@@ -1139,6 +1288,7 @@ export class Cabin {
     gl.uniform3fv(u.uVU, this.vu);
     gl.uniform1f(u.uTanX, this.tanX);
     gl.uniform1f(u.uHW, this.hw);
+    if (u.uNF) gl.uniform2f(u.uNF, this.nf[0], this.nf[1]);
   }
 
   // alvos: mascara em baixa resolucao e a cabine na resolucao da tela
@@ -1239,6 +1389,8 @@ export class Cabin {
     gl.uniform1f(u.uSunUp, this.sunUp);
     gl.uniform1f(u.uProp, this.propA);
     gl.uniform1f(u.uSweep, this.sweep);
+    gl.uniform1f(u.uOutside, this.outside ? 1 : 0);
+    gl.uniform1f(u.uBurnt, this.burnt);
     gl.uniform1f(u.uPanelLight, this.panelLight);
     gl.uniform1f(u.uNavOn, this.lights >= 1 ? 1 : 0);
     gl.uniformMatrix4fv(u.uShM, false, this.shM);
@@ -1261,13 +1413,15 @@ export class Cabin {
   }
 
   // por cima da imagem do mundo, na tela (viewport ja ajustado pelo chamador)
-  compose(drawQuad, ox, oy, line) {
+  compose(drawQuad, ox, oy, line, gTex, gsx, gsy) {
     const gl = this.gl, p = this.progCompose;
     gl.useProgram(p);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.cTex); gl.uniform1i(p.u.uC, 0);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.aTex); gl.uniform1i(p.u.uA, 1);
     gl.uniform2f(p.u.uOrigin, ox, oy);
     gl.uniform1i(p.u.uLine, line);
+    gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, gTex); gl.uniform1i(p.u.uG, 2);
+    gl.uniform2f(p.u.uGS, gsx, gsy);
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
     drawQuad(p);
@@ -1290,6 +1444,9 @@ export function buildForTest() {
   const parts = buildParts();
   const dy = new Mesh();
   for (const q of parts) { for (const i of q.m.i) dy.i.push(i + dy.n); dy.v.push(...q.m.v); dy.n += q.m.n; }
+  const om = new Mesh();
+  buildOutside(om); buildHead(om);
+  for (const i of om.i) dy.i.push(i + dy.n); dy.v.push(...om.v); dy.n += om.n;
   const pr = new Mesh();
   buildProp(pr);
   const t1 = performance.now();

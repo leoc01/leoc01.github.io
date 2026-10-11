@@ -237,12 +237,11 @@ export class Renderer {
     const quad = (q) => this.drawQuad(q);
 
     // 0) cabine (so na camera de cabine): sombra e mascara em baixa resolucao
+    // o aviao e sempre a malha 3D: de dentro (cabine) ou de fora (inteiro, com pele e trem de pouso)
     const ck = I[17] > 0 && I[38] < 0.5;
-    if (ck) {
-      this.cabin.targets(f.iw, f.ih, W, viewH);
-      this.cabin.prepare(I, f.iw, f.ih);
-      this.cabin.maskPass(f.iw, f.ih);
-    }
+    this.cabin.targets(f.iw, f.ih, W, viewH);
+    this.cabin.prepare(I, f.iw, f.ih, !ck);
+    if (ck) this.cabin.maskPass(f.iw, f.ih);   // de fora nao: o relevo pode passar na frente do aviao
 
     // 1) cena: onde a cabine cobre, a profundidade fica 0 e o raymarching e pulado
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.fb);
@@ -265,6 +264,9 @@ export class Renderer {
     this.bindTex(p, 'uBox', 6, this.tBox);
     this.bindTex(p, 'uBGrid', 7, this.tBGrid);
     this.bindTex(p, 'uBIdx', 8, this.tBIdx);
+    this.bindTex(p, 'uPSh', 9, this.cabin.shTex);
+    gl.uniformMatrix4fv(p.u.uPShM, false, this.cabin.shM);
+    gl.uniform1f(p.u.uPShOn, this.cabin.sunUp > 0 ? 1 : 0);
     const u = p.u;
     gl.uniform4fv(u.uAp, this.airports);
     gl.uniform3f(u.uCamPos, I[0], I[1], I[2]);
@@ -303,31 +305,6 @@ export class Renderer {
     this.drawQuad(p);
     gl.disable(gl.DEPTH_TEST);
     gl.depthMask(true);
-
-    // 1b) explosao/fumaca do acidente, por cima da cor da cena (antes dos contornos)
-    if (f.nfx > 0) {
-      p = this.progFx;
-      gl.useProgram(p);
-      gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbFx);
-      gl.enable(gl.BLEND);
-      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);   // alfa pre-multiplicado (fogo parcialmente aditivo)
-      this.bindTex(p, 'uG', 0, this.tG);
-      gl.uniform3f(p.u.uCamPos, I[0], I[1], I[2]);
-      gl.uniform3f(p.u.uCamF, I[3], I[4], I[5]);
-      gl.uniform3f(p.u.uCamR, I[6], I[7], I[8]);
-      gl.uniform3f(p.u.uCamU, I[9], I[10], I[11]);
-      gl.uniform1f(p.u.uTanX, I[12]);
-      gl.uniform1f(p.u.uHW, f.ih / f.iw);
-      gl.uniform3f(p.u.uSun, I[20], I[21], I[22]);
-      gl.uniform3f(p.u.uLight, I[49], I[50], I[51]);
-      gl.uniform3f(p.u.uShade, I[52], I[53], I[54]);
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.fxBuf);
-      gl.bufferData(gl.ARRAY_BUFFER, f.fx.subarray(0, f.nfx * 8), gl.STREAM_DRAW);
-      gl.bindVertexArray(this.fxVao);
-      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, f.nfx);
-      gl.bindVertexArray(null);
-      gl.disable(gl.BLEND);
-    }
 
     // 2) contornos e costa
     p = this.progPost;
@@ -372,15 +349,44 @@ export class Renderer {
     this.drawQuad(p);
 
     // 4b) cabine nitida, na resolucao da tela, por cima do mundo pixelado
-    if (ck) {
+    {
       this.cabin.mainPass(W, viewH);
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.viewport(0, H - viewH, W, viewH);
-      this.cabin.compose(quad, 0, H - viewH, Math.max(1, Math.round((window.devicePixelRatio || 1) * 1.1)));
+      this.cabin.compose(quad, 0, H - viewH, Math.max(1, Math.round((window.devicePixelRatio || 1) * 1.1)), this.tG, f.iw / W, f.ih / viewH);
     }
+    // 4d) explosao/fumaca do acidente, na tela, por cima do mundo e do destroco (escondida pelo que esta na frente)
+    if (f.nfx > 0) {
+      p = this.progFx;
+      gl.useProgram(p);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, H - viewH, W, viewH);
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);   // alfa pre-multiplicado (fogo parcialmente aditivo)
+      this.bindTex(p, 'uG', 0, this.tG);
+      this.bindTex(p, 'uA', 1, this.cabin.aTex);
+      gl.uniform2f(p.u.uOrigin, 0, H - viewH);
+      gl.uniform2f(p.u.uGS, f.iw / W, f.ih / viewH);
+      gl.uniform3f(p.u.uCamPos, I[0], I[1], I[2]);
+      gl.uniform3f(p.u.uCamF, I[3], I[4], I[5]);
+      gl.uniform3f(p.u.uCamR, I[6], I[7], I[8]);
+      gl.uniform3f(p.u.uCamU, I[9], I[10], I[11]);
+      gl.uniform1f(p.u.uTanX, I[12]);
+      gl.uniform1f(p.u.uHW, f.ih / f.iw);
+      gl.uniform3f(p.u.uSun, I[20], I[21], I[22]);
+      gl.uniform3f(p.u.uLight, I[49], I[50], I[51]);
+      gl.uniform3f(p.u.uShade, I[52], I[53], I[54]);
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.fxBuf);
+      gl.bufferData(gl.ARRAY_BUFFER, f.fx.subarray(0, f.nfx * 8), gl.STREAM_DRAW);
+      gl.bindVertexArray(this.fxVao);
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, f.nfx);
+      gl.bindVertexArray(null);
+      gl.disable(gl.BLEND);
+    }
+
     // 4c) brilho das luzes do aviao
     gl.viewport(0, H - viewH, W, viewH);
-    this.lights.draw(I, I[14], W, viewH, this.tG, f.iw, f.ih, ck ? this.cabin.aTex : null, W, viewH);
+    this.lights.draw(I, I[14], W, viewH, this.tG, f.iw, f.ih, this.cabin.aTex, W, viewH);
 
     // 5) painel, HUD e menu
     this.drawCells(f.cells, f.cols, f.rows, cellW, cellH, W, H);

@@ -206,14 +206,17 @@ function drawStatic(c) {
   for (const [vy, vz] of [[-0.455, 0.15], [0.30, 0.2], [0.445, 0.15]]) { const [x, y] = P(vy, vz); circle(c, x, y, M(0.022), C.blackHi, C.out, 2); circle(c, x, y, M(0.012), '#1a1a1e'); circle(c, x - M(0.005), y - M(0.005), M(0.004), '#5a5a62'); }
   a = P(0.20, 0.15); b = P(0.48, 0.045); rrect(c, a[0], a[1], b[0], b[1], M(0.012), C.creamHi, C.creamSh, M(0.003));
   a = P(0.30, 0.135); b = P(0.38, 0.125); rrect(c, a[0], a[1], b[0], b[1], M(0.004), C.chrome, C.out, 1.5);
-  // interruptores na faixa de baixo
-  for (let i = 0; i < 6; i++) { const [x, y] = P(-0.47 + i * 0.035, -0.02); rrect(c, x - M(0.009), y - M(0.016), x + M(0.009), y + M(0.016), 3, '#eeeae2', C.out, 1.5); }
+  // interruptores na faixa de baixo (desenhados de novo com a posicao: em cima = ligado)
+  SWITCHES.forEach((nm, i) => { const [x, y] = P(SW_Y0 + i * SW_DY, SW_Z); text(c, x, y - M(0.024), nm, M(0.0072), '#e8e0cc'); drawSwitch(c, x, y, false); });
   { const [x, y] = P(-0.20, -0.02); circle(c, x, y, M(0.014), C.chromeSh, C.out, 2); circle(c, x, y, M(0.006), '#222'); }
-  // couro da pala por cima: faixa no alto e cantos que descem arredondados
+  // cantos de cima arredondados: acima da borda da pala o painel e recortado (transparente):
+  // ali aparece o capuz de couro e, mais para fora, o para-brisa que desce pelos lados
+  c.globalCompositeOperation = 'destination-out';
   c.beginPath();
   for (let i = 0; i <= 120; i++) { const yy = -PW / 2 + PW * i / 120; const q = P(yy, glareEdgeZ(yy) - 0.004); i ? c.lineTo(q[0], q[1]) : c.moveTo(q[0], q[1]); }
   a = P(PW / 2, TOP + 0.01); c.lineTo(a[0], a[1]); a = P(-PW / 2, TOP + 0.01); c.lineTo(a[0], a[1]); c.closePath();
-  c.fillStyle = C.leather; c.fill();
+  c.fill();
+  c.globalCompositeOperation = 'source-over';
 }
 
 // placa do pedestal (trim): 160 x 300 texels, escala com "DN" em cima e "UP" embaixo
@@ -227,6 +230,18 @@ function drawPed(c) {
   text(c, 30, 158, 'T.O.', 16, '#9fd59f');
   text(c, 80, 284, 'NOSE', 16, '#bdb6a4');
 }
+
+// interruptores de balancim: MASTER e as luzes
+const SWITCHES = ['MSTR', 'BCN', 'LAND', 'TAXI', 'NAV', 'STRB'], SW_Y0 = -0.47, SW_DY = 0.035, SW_Z = -0.025;
+function drawSwitch(c, x, y, on) {
+  const w = M(0.009), h = M(0.016);
+  rrect(c, x - w - 2, y - h - 2, x + w + 2, y + h + 2, 4, '#3a1210');
+  rrect(c, x - w, y - h, x + w, y + h, 3, '#d9d4c8', C.out, 1.5);
+  const t = on ? y - h : y, b = on ? y : y + h;   // metade apertada fica mais escura
+  rrect(c, x - w + 2, t + 2, x + w - 2, b - 2, 2, on ? '#fbf8f0' : '#a9a397');
+  rrect(c, x - w + 2, (on ? y : y - h) + 2, x + w - 2, (on ? y + h : y) - 2, 2, on ? '#bdb7aa' : '#f4f0e6');
+}
+const switchOn = (lv) => [true, lv >= 1, lv >= 3, lv >= 3, lv >= 1, lv >= 2];
 
 function drawCompass(c, hdg) {   // 200 x 120: faixa de proa grande e legivel
   c.fillStyle = '#0e0f12'; c.fillRect(0, 0, 200, 120);
@@ -271,6 +286,10 @@ export class PanelArt {
       const cv = document.createElement('canvas'); cv.width = w; cv.height = w;
       return { g, bx, by, cv, x: x - bx, y: y - by, R: g.r * S };
     });
+    { const a = P(SW_Y0 - 0.014, SW_Z + 0.02), b = P(SW_Y0 + 5 * SW_DY + 0.014, SW_Z - 0.02);
+      const bx = Math.floor(a[0]), by = Math.floor(a[1]), cv = document.createElement('canvas');
+      cv.width = Math.ceil(b[0] - a[0]); cv.height = Math.ceil(b[1] - a[1]);
+      this.dyn.push({ g: { hands: (c, x, y, R, I) => SWITCHES.forEach((nm, i) => { const q = P(SW_Y0 + i * SW_DY, SW_Z); drawSwitch(c, q[0] - bx, q[1] - by, switchOn(I.lights)[i]); }) }, bx, by, cv }); }
     this.comp = document.createElement('canvas'); this.comp.width = R_COMP[2]; this.comp.height = R_COMP[3];
     this.tex = gl.createTexture();
     gl.activeTexture(gl.TEXTURE15);
@@ -288,7 +307,7 @@ export class PanelArt {
   // I: valores dos instrumentos; redesenha so o que mudou
   update(I) {
     const gl = this.gl;
-    const key = [I.kt, I.ft, I.hdg, I.pitch, I.roll, I.fpm / 10, I.rpm / 10, I.turn * 4, I.slip * 200].map((v) => v.toFixed(1)).join(',');
+    const key = [I.kt, I.ft, I.hdg, I.pitch, I.roll, I.fpm / 10, I.rpm / 10, I.turn * 4, I.slip * 200, I.lights].map((v) => v.toFixed(1)).join(',');
     if (key === this.last) return;
     this.last = key;
     gl.activeTexture(gl.TEXTURE15);

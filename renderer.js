@@ -2,6 +2,7 @@
 // uma passada desenha contornos/costa, outra os pontos da pista, e por cima
 // vai a grade de celulas do painel e do menu (mesmo codigo C do terminal).
 import { Cabin } from './cabin.js';
+import { Lights } from './lights.js';
 import { QUAD_VS, QUAD_FAR_VS, SCENE_FS, POST_FS, POINTS_VS, POINTS_FS, BLIT_FS, CELLS_FS, FX_VS, FX_FS } from './shaders.js';
 
 const XTERM = (() => {
@@ -37,6 +38,7 @@ export class Renderer {
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
     this.ptsBuf = gl.createBuffer();
     this.cabin = new Cabin(gl, (vs, fs) => this.program(vs, fs));
+    this.lights = new Lights(gl, (vs, fs) => this.program(vs, fs));
     // explosao: um quad por particula (instanciado), atributos num VAO proprio
     this.progFx = this.program(FX_VS, FX_FS);
     this.fxBuf = gl.createBuffer();
@@ -290,6 +292,10 @@ export class Renderer {
     gl.uniform1i(u.uCrashed, I[38]);
     gl.uniform1i(u.uDrawPlane, I[39]);
     gl.uniform3fv(u.uPal, I.subarray(40, 58));
+    gl.uniform1f(u.uNight, I[87]);
+    const land = Lights.landing(I);
+    gl.uniform4f(u.uLand, land ? land.pos[0] : 0, land ? land.pos[1] : 0, land ? land.pos[2] : 0, land ? (I[87] > 0.5 ? 1.0 : 0.35) : 0);
+    gl.uniform3f(u.uLandDir, land ? land.dir[0] : 1, land ? land.dir[1] : 0, land ? land.dir[2] : 0);
     gl.uniform1f(u.uHmax, this.hmax);
     gl.uniform1f(u.uPix, 2 * I[12] / f.iw);
     gl.uniform4fv(u.uPB, this.planeBoxes);
@@ -329,6 +335,7 @@ export class Renderer {
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbPost);
     this.bindTex(p, 'uColor', 0, this.tColor);
     this.bindTex(p, 'uG', 1, this.tG);
+    gl.uniform1f(p.u.uNight, I[87]);
     this.drawQuad(p);
 
     // 3) realce da pista (pontos com teste de profundidade)
@@ -371,6 +378,9 @@ export class Renderer {
       gl.viewport(0, H - viewH, W, viewH);
       this.cabin.compose(quad, 0, H - viewH, Math.max(1, Math.round((window.devicePixelRatio || 1) * 1.1)));
     }
+    // 4c) brilho das luzes do aviao
+    gl.viewport(0, H - viewH, W, viewH);
+    this.lights.draw(I, I[14], W, viewH, this.tG, f.iw, f.ih, ck ? this.cabin.aTex : null, W, viewH);
 
     // 5) painel, HUD e menu
     this.drawCells(f.cells, f.cols, f.rows, cellW, cellH, W, H);

@@ -42,6 +42,9 @@ uniform float uProp;
 uniform vec4 uPB[66];      // caixas do aviao: 3 vec4 por caixa
 uniform int uNPB;
 uniform vec3 uPal[6];      // ceu topo, ceu horizonte, nevoa, luz, sombra, sol
+uniform float uNight;      // 1 = noite de lua
+uniform vec4 uLand;        // farol de pouso: posicao (mundo) e intensidade (0 = apagado)
+uniform vec3 uLandDir;
 
 in vec2 vUV;
 layout(location = 0) out vec4 oColor;
@@ -355,12 +358,41 @@ vec3 fogC(vec3 c, float t) {
     return mix(c, uPal[2], f);
 }
 
+// farol de pouso: cone estreito com queda pela distancia (so pesa de noite)
+vec3 landLight(vec3 p, vec3 n, vec3 base) {
+    if (uLand.w <= 0.0) return vec3(0.0);
+    vec3 v = p - uLand.xyz;
+    v.xy = vec2(wrapf(v.x), wrapf(v.y));
+    float d = length(v);
+    if (d > 900.0) return vec3(0.0);
+    vec3 l = v / d;
+    float spot = smoothstep(0.955, 0.992, dot(l, uLandDir));
+    float lam = max(dot(n, -l), 0.0) * 0.7 + 0.3;
+    float att = 1.0 / (1.0 + (d / 70.0) * (d / 70.0));
+    return base * vec3(1.0, 0.94, 0.80) * (spot * lam * att * 2.4 * uLand.w);
+}
+// estrelas: pontos fixos no ceu (celulas na direcao), somem perto do horizonte
+vec3 stars(vec3 rd) {
+    vec3 q = rd * 420.0;
+    ivec3 c = ivec3(floor(q));
+    float h = hash3f(c.x, c.y, c.z * 7 + 11);
+    if (h < 0.9935) return vec3(0.0);
+    vec3 f = fract(q) - 0.5;
+    float b = (h - 0.9935) / 0.0065;
+    float core = smoothstep(0.42, 0.0, length(f));
+    return vec3(0.75, 0.82, 1.0) * core * (0.35 + 0.9 * b * b) * smoothstep(0.02, 0.18, rd.z);
+}
+
 vec3 sky(vec3 ro, vec3 rd, out int kind) {
     float h = clamp(rd.z, 0.0, 1.0);
     vec3 c = mix(uPal[1], uPal[0], smoothstep(0.0, 0.55, h));
     if (rd.z < 0.0) c = uPal[2];
     float mu = dot(rd, uSun);
-    if (mu > 0.9990) c = vec3(1.0, 0.99, 0.90);
+    if (uNight > 0.5) {   // lua menor e mais branca, halo fraco, estrelas
+        c += stars(rd);
+        if (mu > 0.99965) c = vec3(0.93, 0.95, 1.0) * (0.85 + 0.15 * smoothstep(0.99965, 0.99995, mu));
+        else if (mu > 0.9975) c = mix(c, uPal[5], 0.12);
+    } else if (mu > 0.9990) c = vec3(1.0, 0.99, 0.90);
     else if (mu > 0.9965) c = mix(c, uPal[5], 0.6);
     else if (mu > 0.985) c = mix(c, uPal[5], 0.18);
     kind = GK_SKY;
@@ -372,7 +404,7 @@ vec3 sky(vec3 ro, vec3 rd, out int kind) {
             if (d > 0.28) {
                 float sl = length(uSun.xy) + 1e-4;
                 float ds = cloudDensity(q.x + uSun.x / sl * 140.0, q.y + uSun.y / sl * 140.0);
-                vec3 lit = mix(vec3(1.0, 0.98, 0.96), uPal[5], 0.25);
+                vec3 lit = mix(vec3(1.0, 0.98, 0.96), uPal[5], 0.25) * mix(1.0, 0.30, uNight);
                 vec3 cc = (ds > d + 0.08 || d > 0.75) ? mix(lit, uPal[4], 0.45) : lit;
                 float far = smoothstep(6000.0, 30000.0, tc);
                 c = mix(cc, c, far * 0.7);
@@ -417,10 +449,13 @@ vec3 shadeBox(int bi, vec3 p, vec3 n, vec3 ro, out int kind) {
         float cx = p.x + wrapf(b0.x - p.x), cy = p.y + wrapf(b0.y - p.y);
         float u = (p.x - cx) * -n.y + (p.y - cy) * n.x;
         float wu = mod(u + 1000.0, 3.2), wz = mod(p.z - b0.z, 3.4);
-        if (wu > 0.8 && wu < 2.4 && wz > 1.1 && wz < 2.3 && p.z < b0.w - 0.6) c *= vec3(0.35, 0.45, 0.6);
+        if (wu > 0.8 && wu < 2.4 && wz > 1.1 && wz < 2.3 && p.z < b0.w - 0.6) {
+            c *= vec3(0.35, 0.45, 0.6);
+            if (uNight > 0.5 && hash3f(int(floor((u + 1000.0) / 3.2)), int(floor((p.z - b0.z) / 3.4)), bi) > 0.45) c = vec3(1.0, 0.78, 0.42);   // janela acesa
+        }
     }
     if ((flags & 2) != 0 && noiseSmooth(p.x * 1.7 + p.z * 1.1, p.y * 1.7 - p.z * 0.8, 21) > 0.58) c *= vec3(0.17, 0.16, 0.16);   // malhas
-    return c;
+    return c + landLight(p, n, base);
 }
 
 vec3 shadeLand(vec3 p, float t, bool primary, out float mat) {
@@ -447,7 +482,18 @@ vec3 shadeLand(vec3 p, float t, bool primary, out float mat) {
         if (k > 0.0 && cloudDensity(p.x + uSun.x * k, p.y + uSun.y * k) > 0.3) sh *= 0.35;
     }
     vec3 c = celLight(base, max(dot(n, uSun), 0.0) * 1.25, sh);
-    return c * (0.75 + 0.25 * sa.g);
+    c *= 0.75 + 0.25 * sa.g;
+    if (primary) c += landLight(p, n, base);
+    if (uNight > 0.5 && int(mat + 0.5) == 7) {   // cidade de noite: janelas e postes acesos
+        ivec2 q = ivec2(floor(p.xy / 7.0));
+        float h = hash3f(q.x, q.y, 41);
+        vec2 f = fract(p.xy / 7.0) - 0.5;
+        float dot_ = h > 0.55 ? smoothstep(0.32, 0.08, length(f)) : 0.0;
+        float far = smoothstep(250.0, 1800.0, t);
+        float glow = mix(dot_ * (0.6 + 0.8 * (h - 0.55) / 0.45), 0.30, far);
+        c += vec3(1.0, 0.72, 0.38) * glow;
+    }
+    return c;
 }
 
 // superficie sem reflexo (usada pelo reflexo da agua)
@@ -474,7 +520,7 @@ vec3 shadeWater(vec3 p, vec3 rd, float t) {
     float w = sin(p.x * 0.05 + p.y * 0.03 + uTime * 1.1) + sin(p.x * -0.02 + p.y * 0.07 + uTime * 0.8);
     vec3 n = normalize(vec3(0.04 * w / (1.0 + t / 600.0), 0.03 * w / (1.0 + t / 600.0), 1.0));
     float depth = -terH(p.xy);
-    vec3 body = mix(vec3(0.30, 0.78, 0.80), vec3(0.10, 0.38, 0.66), smoothstep(0.5, 12.0, depth));
+    vec3 body = mix(vec3(0.30, 0.78, 0.80), vec3(0.10, 0.38, 0.66), smoothstep(0.5, 12.0, depth)) * mix(1.0, 0.22, uNight);
     float sh = shAO(p.xy, t).r;
     if (sh < 0.5) body *= mix(uPal[4], vec3(1.0), 0.35);
     float cosi = max(-dot(rd, n), 0.0);
@@ -491,9 +537,9 @@ vec3 shadeWater(vec3 p, vec3 rd, float t) {
     if (sh > 0.5) body = mix(body, vec3(1.0, 1.0, 0.95), 0.85 * g);
     if (depth < 1.2) {
         float k = noiseSmooth(p.x * 0.4 + uTime * 0.4, p.y * 0.4, 31);
-        if (k > 0.45) body = mix(body, vec3(0.95, 0.98, 1.0), 0.8 * (1.0 - smoothstep(800.0, 3000.0, t)));
+        if (k > 0.45) body = mix(body, vec3(0.95, 0.98, 1.0) * mix(1.0, 0.25, uNight), 0.8 * (1.0 - smoothstep(800.0, 3000.0, t)));
     }
-    return body;
+    return body + landLight(p, n, vec3(0.25, 0.35, 0.45));
 }
 
 void main() {
@@ -530,6 +576,7 @@ export const POST_FS = `#version 300 es
 precision highp float;
 precision highp sampler2D;
 uniform sampler2D uColor, uG;
+uniform float uNight;
 in vec2 vUV;
 out vec4 oColor;
 const int GK_SKY = 0, GK_CLOUD = 1, GK_LAND = 2, GK_WATER = 3;
@@ -573,7 +620,7 @@ void main() {
         bool land = kindAt(q + ivec2(-1, 0)) == GK_LAND || kindAt(q + ivec2(1, 0)) == GK_LAND || kindAt(q + ivec2(0, 1)) == GK_LAND;
         if (land) {
             float far = smoothstep(3000.0, 14000.0, g.x);
-            col = mix(col, vec3(0.97), 0.65 * (1.0 - far * 0.6));
+            col = mix(col, mix(vec3(0.97), vec3(0.26, 0.30, 0.42), uNight), 0.65 * (1.0 - far * 0.6));
         }
     }
     oColor = vec4(col, 1.0);

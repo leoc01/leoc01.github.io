@@ -1,8 +1,8 @@
 // renderer.js - WebGL2: dados do mundo viram texturas, o shader faz o raymarching,
 // uma passada desenha contornos/costa, outra os pontos da pista, e por cima
 // vai a grade de celulas do painel e do menu (mesmo codigo C do terminal).
-import { Cockpit } from './cockpit.js';
-import { QUAD_VS, SCENE_FS, POST_FS, POINTS_VS, POINTS_FS, BLIT_FS, CELLS_FS, FX_VS, FX_FS, COCKPIT_FS, CK_COMPOSE_FS } from './shaders.js';
+import { Cabin } from './cabin.js';
+import { QUAD_VS, QUAD_FAR_VS, SCENE_FS, POST_FS, POINTS_VS, POINTS_FS, BLIT_FS, CELLS_FS, FX_VS, FX_FS } from './shaders.js';
 
 const XTERM = (() => {
   const p = [[0,0,0],[128,0,0],[0,128,0],[128,128,0],[0,0,128],[128,0,128],[0,128,128],[192,192,192],
@@ -27,7 +27,7 @@ export class Renderer {
     if (!gl) throw new Error('Seu navegador nao oferece WebGL2.');
     if (!gl.getExtension('EXT_color_buffer_float')) throw new Error('Seu navegador nao oferece EXT_color_buffer_float.');
     this.gl = gl;
-    this.progScene = this.program(QUAD_VS, SCENE_FS);
+    this.progScene = this.program(QUAD_FAR_VS, SCENE_FS);
     this.progPost = this.program(QUAD_VS, POST_FS);
     this.progPts = this.program(POINTS_VS, POINTS_FS);
     this.progBlit = this.program(QUAD_VS, BLIT_FS);
@@ -36,9 +36,7 @@ export class Renderer {
     gl.bindBuffer(gl.ARRAY_BUFFER, this.quad);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
     this.ptsBuf = gl.createBuffer();
-    this.cockpit = new Cockpit(gl);
-    this.progCk = this.program(QUAD_VS, COCKPIT_FS);
-    this.progCkC = this.program(QUAD_VS, CK_COMPOSE_FS);
+    this.cabin = new Cabin(gl, (vs, fs) => this.program(vs, fs));
     // explosao: um quad por particula (instanciado), atributos num VAO proprio
     this.progFx = this.program(FX_VS, FX_FS);
     this.fxBuf = gl.createBuffer();
@@ -184,6 +182,7 @@ export class Renderer {
     if (this.fb) {
       for (const t of [this.tColor, this.tG, this.tPost]) gl.deleteTexture(t);
       gl.deleteFramebuffer(this.fb); gl.deleteFramebuffer(this.fbPost); gl.deleteFramebuffer(this.fbFx);
+      gl.deleteRenderbuffer(this.rbDepth);
     }
     this.fw = w; this.fh = h;
     this.tColor = this.tex(w, h, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, null);
@@ -198,6 +197,10 @@ export class Renderer {
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.fb);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.tColor, 0);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, this.tG, 0);
+    this.rbDepth = gl.createRenderbuffer();   // a cabine marca profundidade 0 onde cobre a cena
+    gl.bindRenderbuffer(gl.RENDERBUFFER, this.rbDepth);
+    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, w, h);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, this.rbDepth);
     gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
     this.fbFx = gl.createFramebuffer();      // so a cor da cena: a explosao le a profundidade de tG
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbFx);
@@ -229,13 +232,29 @@ export class Renderer {
     const cellW = W / f.cols, cellH = H / f.rows;
     const viewH = Math.round(f.vrows * cellH);
     this.ensureTargets(f.iw, f.ih);
+    const quad = (q) => this.drawQuad(q);
 
-    // 1) cena
-    let p = this.progScene;
-    gl.useProgram(p);
+    // 0) cabine (so na camera de cabine): sombra e mascara em baixa resolucao
+    const ck = I[17] > 0 && I[38] < 0.5;
+    if (ck) {
+      this.cabin.targets(f.iw, f.ih, W, viewH);
+      this.cabin.prepare(I, f.iw, f.ih);
+      this.cabin.maskPass(f.iw, f.ih);
+    }
+
+    // 1) cena: onde a cabine cobre, a profundidade fica 0 e o raymarching e pulado
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.fb);
     gl.viewport(0, 0, f.iw, f.ih);
     gl.disable(gl.BLEND);
+    gl.depthMask(true);
+    gl.clearDepth(1);
+    gl.clear(gl.DEPTH_BUFFER_BIT);
+    if (ck) this.cabin.markPass(quad);
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LEQUAL);
+    gl.depthMask(false);
+    let p = this.progScene;
+    gl.useProgram(p);
     this.bindTex(p, 'uH', 0, this.tH);
     this.bindTex(p, 'uToon', 1, this.tToon);
     this.bindTex(p, 'uSA', 3, this.tSA);
@@ -275,20 +294,9 @@ export class Renderer {
     gl.uniform1f(u.uPix, 2 * I[12] / f.iw);
     gl.uniform4fv(u.uPB, this.planeBoxes);
     gl.uniform1i(u.uNPB, this.nPlaneBoxes);
-    // interior da cabine (so na camera de cabine)
-    if (I[17] > 0) {
-      const I2 = { kt: I[67], ft: I[68], hdg: I[69], pitch: I[70], roll: I[71], fpm: I[72], rpm: I[73], flaps: I[74],
-                   trim: I[75], turn: I[76], slip: I[77] };
-      this.cockpit.update(I2);
-      this.cockpit.build(I[78], I[79]);
-      gl.useProgram(p);
-      gl.uniform1i(u.uCkN, this.cockpit.n);
-      this.ckLight = 0.62 + 0.38 * Math.min(1, Math.max(0, I[22] * 2.5));
-      gl.uniform1f(u.uCkLight, this.ckLight);
-    } else gl.uniform1i(u.uCkN, 0);
-    this.bindTex(p, 'uCkTex', 9, this.cockpit.tex);
-    this.bindTex(p, 'uCkData', 10, this.cockpit.dataTex);
     this.drawQuad(p);
+    gl.disable(gl.DEPTH_TEST);
+    gl.depthMask(true);
 
     // 1b) explosao/fumaca do acidente, por cima da cor da cena (antes dos contornos)
     if (f.nfx > 0) {
@@ -356,51 +364,12 @@ export class Renderer {
     this.bindTex(p, 'uTex', 0, this.tPost);
     this.drawQuad(p);
 
-    // 4b) cabine nitida, na resolucao da tela (o mundo continua pixelado por baixo):
-    //     A) traca o interior num buffer (id da peca no alfa), so onde a cena viu cabine;
-    //     B) compoe na tela com contornos de desenho entre pecas
-    if (I[17] > 0) {
-      const ckW = W, ckH = viewH;
-      if (!this.ckFB || this.ckW !== ckW || this.ckH !== ckH) {
-        if (this.ckFB) { gl.deleteFramebuffer(this.ckFB); gl.deleteTexture(this.ckTexBuf); }
-        this.ckW = ckW; this.ckH = ckH;
-        this.ckTexBuf = this.tex(ckW, ckH, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, null);
-        this.ckFB = gl.createFramebuffer();
-        gl.bindFramebuffer(gl.FRAMEBUFFER, this.ckFB);
-        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.ckTexBuf, 0);
-      }
-      gl.bindFramebuffer(gl.FRAMEBUFFER, this.ckFB);
-      gl.viewport(0, 0, ckW, ckH);
-      p = this.progCk;
-      gl.useProgram(p);
-      const u2 = p.u;
-      gl.uniform3f(u2.uCamPos, I[0], I[1], I[2]);
-      gl.uniform3f(u2.uCamF, I[3], I[4], I[5]);
-      gl.uniform3f(u2.uCamR, I[6], I[7], I[8]);
-      gl.uniform3f(u2.uCamU, I[9], I[10], I[11]);
-      gl.uniform3f(u2.uSun, I[20], I[21], I[22]);
-      gl.uniform1f(u2.uTanX, I[12]);
-      gl.uniform1f(u2.uHW, f.ih / f.iw);
-      gl.uniform1f(u2.uPix, 2 * I[12] / ckW);
-      gl.uniform2f(u2.uSize, ckW, ckH);
-      gl.uniform3f(u2.uPPos, I[25], I[26], I[27]);
-      gl.uniform3f(u2.uPF, I[28], I[29], I[30]);
-      gl.uniform3f(u2.uPR, I[31], I[32], I[33]);
-      gl.uniform3f(u2.uPU, I[34], I[35], I[36]);
-      gl.uniform1i(u2.uCkN, this.cockpit.n);
-      gl.uniform1f(u2.uCkLight, this.ckLight);
-      this.bindTex(p, 'uCkTex', 0, this.cockpit.tex);
-      this.bindTex(p, 'uCkData', 1, this.cockpit.dataTex);
-      this.bindTex(p, 'uG', 2, this.tG);
-      this.drawQuad(p);
+    // 4b) cabine nitida, na resolucao da tela, por cima do mundo pixelado
+    if (ck) {
+      this.cabin.mainPass(W, viewH);
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.viewport(0, H - viewH, W, viewH);
-      p = this.progCkC;
-      gl.useProgram(p);
-      gl.uniform2f(p.u.uOrigin, 0, H - viewH);
-      gl.uniform1i(p.u.uLine, Math.max(1, Math.round((window.devicePixelRatio || 1) * 1.2)));
-      this.bindTex(p, 'uCk', 0, this.ckTexBuf);
-      this.drawQuad(p);
+      this.cabin.compose(quad, 0, H - viewH, Math.max(1, Math.round((window.devicePixelRatio || 1) * 1.1)));
     }
 
     // 5) painel, HUD e menu

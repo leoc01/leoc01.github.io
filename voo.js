@@ -189,7 +189,7 @@ async function main() {
 
   // ---------- laco ----------
   let tPrev = performance.now() / 1000, last = 0, fpsN = 0, fpsT = tPrev;
-  const info = () => new Float32Array(w.memory.buffer, w.voo_info(), 80);
+  const info = () => new Float32Array(w.memory.buffer, w.voo_info(), 96);
   let iw = 0, ih = 0, vrowsPrev = 30;
   const frame = (now) => {
     requestAnimationFrame(frame);

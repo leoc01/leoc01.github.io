@@ -12,14 +12,14 @@
 // numeros grandes e um mostrador digital em cada um.
 
 const S = 1536;                       // texels por metro no painel
-const PW = 1.32, PZ0 = -0.05, TOP = 0.29, PX = 1.25;
+const PW = 1.06, PZ0 = -0.05, TOP = 0.29, PX = 1.25;   // cabine do 172: 1,07 m de largura
 const PH = TOP - PZ0;                 // altura do painel (z)
 const CREAM_TOP = 0.282, CREAM_BOT = 0.115;
 const ATW = 2048, ATH = 1024;
 
 const C = {
   cream: '#e7dec8', creamSh: '#cec4ac', creamHi: '#f2ebda', leather: '#1a191b', leatherHi: '#403e42',
-  red: '#b22c24', redSh: '#801e1c', black: '#161619', blackHi: '#46464e', face: '#121318',
+  red: '#b22c24', seat: '#8c2a26', redSh: '#801e1c', black: '#161619', blackHi: '#46464e', face: '#121318',
   mark: '#f4f1e8', out: '#141214', green: '#4fcf55', yellow: '#ffd23c', redArc: '#ff5a3c',
   orange: '#ff9a1e', sky: '#4f9fe8', ground: '#a0683a', amber: '#ffb33c', chrome: '#ced0d4',
   chromeSh: '#787a82', ink: '#3c332e', lcd: '#2a2d34',
@@ -76,7 +76,7 @@ function gaugeBase(c, cy, cz, r) {
 }
 
 // ---------- instrumentos ----------
-const r6 = 0.037, z1 = 0.236, z2 = 0.152, xs = [-0.345, -0.253, -0.161];
+const r6 = 0.035, z1 = 0.238, z2 = 0.151, xs = [-0.34, -0.25, -0.16];   // sem aros se encostando
 const ASI = (v) => -140 + 280 * Math.min(Math.max(v, 0), 180) / 180;
 const VSIA = (v) => -90 + Math.max(-2000, Math.min(2000, v)) / 2000 * 115;
 const TACH = (v) => -130 + 260 * Math.min(Math.max(v, 0), 3500) / 3500;
@@ -157,7 +157,7 @@ const GAUGES = [
       text(c, x + R * 0.57, y + R * 0.01, (v > 0 ? '+' : '') + v, R * 0.24, C.mark);
       needle(c, x, y, R, VSIA(I.fpm));
     } },
-  { y: -0.445, z: 0.194, r: 0.036, face(c, x, y, R) {    // conta-giros
+  { y: -0.445, z: 0.194, r: 0.035, face(c, x, y, R) {    // conta-giros
       band(c, x, y, R * 0.86, TACH(2100), TACH(2700), C.green, R * 0.12);
       line(c, angPt(x, y, R * 0.96, TACH(2700)), angPt(x, y, R * 0.7, TACH(2700)), C.redArc, R * 0.07, 'butt');
       ticks(c, x, y, R, TACH(0), TACH(3500), 7, 1);
@@ -172,11 +172,11 @@ const FLAPS = { y0: 0.248, z0: 0.256, y1: 0.27, z1: 0.135 };
 function drawStatic(c) {
   // couro de fundo, faixa vermelha embaixo, painel creme de cantos redondos
   c.fillStyle = C.leather; c.fillRect(0, 0, M(PW), M(PH));
-  let a = P(-0.66, CREAM_BOT + 0.004), b = P(0.66, PZ0);
+  let a = P(-PW / 2, CREAM_BOT + 0.004), b = P(PW / 2, PZ0);
   c.fillStyle = C.red; c.fillRect(a[0], a[1], b[0] - a[0], b[1] - a[1]);
-  a = P(-0.645, CREAM_TOP); b = P(0.645, CREAM_BOT);
+  a = P(-PW / 2 + 0.012, CREAM_TOP); b = P(PW / 2 - 0.012, CREAM_BOT);
   rrect(c, a[0], a[1], b[0], b[1], M(0.035), C.cream, C.out, M(0.003));
-  a = P(-0.638, CREAM_TOP - 0.003); b = P(0.638, CREAM_TOP - 0.012);
+  a = P(-PW / 2 + 0.02, CREAM_TOP - 0.003); b = P(PW / 2 - 0.02, CREAM_TOP - 0.012);
   rrect(c, a[0], a[1], b[0], b[1], M(0.03), C.creamHi);
   // radios
   a = P(-0.008, 0.278); b = P(0.214, 0.118);
@@ -214,11 +214,11 @@ function drawStatic(c) {
     [0, 10, 20, 30].forEach((v, k) => { const yy = p0[1] + M(0.012) + (p1[1] - p0[1] - M(0.024)) * k / 3; line(c, [p1[0] + M(0.004), yy], [p1[0] + M(0.01), yy], C.ink, M(0.002)); text(c, p1[0] + M(0.012), yy, String(v), M(0.012), C.ink, 'left'); }); }
   // relogio e luzes
   { const [x, y, R] = gaugeBase(c, 0.40, 0.205, 0.03); ticks(c, x, y, R, 0, 360, 12, 3); needle(c, x, y, R, 150, 0.5, 0.1); needle(c, x, y, R, 300, 0.82, 0.06); }
-  ['#d23c28', '#f0b428', '#5abe5a'].forEach((col, i) => { const [x, y] = P(0.48 + i * 0.035, 0.205); circle(c, x, y, M(0.009), C.black, C.out, 1.5); circle(c, x, y, M(0.0055), col); c.globalAlpha = 0.45; circle(c, x, y, M(0.0055), '#000'); c.globalAlpha = 1; });
+  ['#d23c28', '#f0b428', '#5abe5a'].forEach((col, i) => { const [x, y] = P(0.36 + i * 0.04, 0.14); circle(c, x, y, M(0.009), C.black, C.out, 1.5); circle(c, x, y, M(0.0055), col); c.globalAlpha = 0.45; circle(c, x, y, M(0.0055), '#000'); c.globalAlpha = 1; });
   // faixa vermelha: interruptores, botoes cromados, disjuntores (quase nao aparece de frente)
-  for (let i = 0; i < 8; i++) { const [x, y] = P(-0.6 + i * 0.032, 0.07); rrect(c, x - M(0.01), y - M(0.017), x + M(0.01), y + M(0.017), 3, '#eeeae2', C.out, 1.5); }
+  for (let i = 0; i < 8; i++) { const [x, y] = P(-0.48 + i * 0.032, 0.07); rrect(c, x - M(0.01), y - M(0.017), x + M(0.01), y + M(0.017), 3, '#eeeae2', C.out, 1.5); }
   for (let i = 0; i < 3; i++) { const [x, y] = P(0.03 + i * 0.07, 0.07); circle(c, x, y, M(0.014), C.chromeSh, C.out, 2); circle(c, x - 3, y - 2, M(0.009), C.chrome); }
-  for (let i = 0; i < 10; i++) { const [x, y] = P(0.30 + i * 0.03, 0.075); circle(c, x, y, M(0.006), C.black, C.out, 1); }
+  for (let i = 0; i < 10; i++) { const [x, y] = P(0.28 + i * 0.024, 0.075); circle(c, x, y, M(0.006), C.black, C.out, 1); }
   c.strokeStyle = C.out; c.lineWidth = 4; c.strokeRect(0, 0, M(PW), M(PH));
 }
 
@@ -259,6 +259,17 @@ function drawDoor(c) {   // 400 x 150: creme em cima, vermelho embaixo, friso cr
   rrect(c, 220, 75, 288, 88, 5, C.chrome, C.out, 1.5);
   c.strokeStyle = C.redSh; c.lineWidth = 1.5; for (let x = 0; x < 400; x += 30) { c.beginPath(); c.moveTo(x, 65); c.lineTo(x, 150); c.stroke(); }
 }
+function drawHead(c) {  // 600 x 300: forro do teto (u = para tras, v = esquerda -> direita)
+  c.fillStyle = '#d9d0bc'; c.fillRect(0, 0, 600, 300);
+  c.strokeStyle = '#bdb39d'; c.lineWidth = 2;
+  for (let k = 1; k < 7; k++) { const y = k * 300 / 7; c.beginPath(); c.moveTo(0, y); c.lineTo(600, y); c.stroke(); }   // costuras
+  c.strokeStyle = '#c9bfa9'; c.lineWidth = 1.5;
+  for (let x = 90; x < 600; x += 110) { c.beginPath(); c.moveTo(x, 0); c.lineTo(x, 300); c.stroke(); }
+  c.fillStyle = '#2a2a2e'; c.fillRect(0, 0, 10, 300);                          // borda do para-brisa
+  for (const y of [40, 260]) { circle(c, 40, y, 16, '#3a3a40', C.out, 2); circle(c, 40, y, 7, '#18181c'); }   // difusores de ar
+  rrect(c, 150, 128, 200, 172, 8, '#f4efe2', C.out, 2);                      // luz da cabine
+  rrect(c, 60, 136, 110, 164, 6, '#46464e', C.out, 2);                         // alto-falante / interruptores
+}
 function drawCompass(c, hdg) {   // 200 x 120: faixa de proa grande e legivel
   c.fillStyle = '#0e0f12'; c.fillRect(0, 0, 200, 120);
   c.fillStyle = '#ece8dc'; c.fillRect(8, 14, 184, 92);
@@ -279,6 +290,7 @@ const R_GLARE = [640, 560, 600, 60];
 const R_ROLL = [640, 640, 600, 40];
 const R_DOOR = [1260, 560, 400, 150];
 const R_COMP = [1700, 560, 200, 120];
+const R_HEAD = [640, 700, 600, 300];
 
 export class Cockpit {
   constructor(gl) {
@@ -288,7 +300,7 @@ export class Cockpit {
     const c = at.getContext('2d');
     drawStatic(c);
     const sub = (R, fn) => { c.save(); c.translate(R[0], R[1]); c.beginPath(); c.rect(0, 0, R[2], R[3]); c.clip(); fn(c); c.restore(); };
-    sub(R_YOKE, drawYoke); sub(R_GLARE, drawGlare); sub(R_ROLL, drawRoll); sub(R_DOOR, drawDoor);
+    sub(R_YOKE, drawYoke); sub(R_GLARE, drawGlare); sub(R_ROLL, drawRoll); sub(R_DOOR, drawDoor); sub(R_HEAD, drawHead);
     this.atlas = at;
     // recortes dinamicos: um canvas pequeno por instrumento, com o fundo fixo copiado do atlas
     this.dyn = GAUGES.map((g) => {
@@ -314,7 +326,12 @@ export class Cockpit {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.generateMipmap(gl.TEXTURE_2D);
-    this.quads = new Float32Array(24 * 16);
+    this.quads = new Float32Array(64 * 16);
+    this.dataTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.dataTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, 4, 64, 0, gl.RGBA, gl.FLOAT, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     this.n = 0;
     this.last = '';
   }
@@ -351,44 +368,82 @@ export class Cockpit {
     gl.generateMipmap(gl.TEXTURE_2D);
   }
 
-  // paralelogramos do interior (com os manches na posicao dos comandos)
+  // pecas do interior (com os manches na posicao dos comandos); envia para a textura de dados.
+  // Medidas do 172: cabine de 1,07 m de largura e 1,22 m de altura; olho do piloto em
+  // (0.5, -0.27, 0.55); chao em z=-0.33, forro em z=0.89, paredes em y=+-0.53.
   build(elev, ail) {
     const q = this.quads;
     let n = 0;
     const uv = (R) => [R[0] / ATW, R[1] / ATH, R[2] / ATW, R[3] / ATH];
-    // mode: 0 cor chapada, 1 textura, 2 textura com recorte. dens: texels por metro ao longo de U
+    // paralelogramo O + aU + bV. mode: 0 cor, 1 textura, 2 textura com recorte. dens: texels/m em U
     const add = (O, U, V, mode, a, dens = 0) => {
       q.set([O[0], O[1], O[2], mode, U[0], U[1], U[2], dens, V[0], V[1], V[2], 0, a[0], a[1], a[2], a[3] || 0], n * 16);
       n++;
     };
+    // caixa: canto O, arestas U e V (perpendiculares) e espessura d ao longo de UxV (negativa = lado oposto).
+    // pleat: espacamento dos gomos do estofado (m) nas faces grandes, 0 = liso
+    const box = (O, U, V, d, col, pleat = 0) => {
+      const c = hex(col);
+      q.set([O[0], O[1], O[2], 3, U[0], U[1], U[2], 0, V[0], V[1], V[2], d, c[0], c[1], c[2], pleat], n * 16);
+      n++;
+    };
     const hex = (h) => [parseInt(h.slice(1, 3), 16) / 255, parseInt(h.slice(3, 5), 16) / 255, parseInt(h.slice(5, 7), 16) / 255, 0];
+    const F = -0.33, R = 0.89, Y = 0.53;
     // manches: andam com o profundor (puxar = vem para tras) e giram com o aileron
     const yoke = (yc) => {
-      const W = 0.40, H = 0.187, zb = 0.03, x = 1.0 - 0.06 * elev;
+      const W = 0.36, H = 0.168, zb = 0.03, x = 1.0 - 0.06 * elev;
       const hubZ = zb + H * (1 - 200 / 280), th = -ail * 0.7;
       const rot = (y, z) => [y * Math.cos(th) - z * Math.sin(th), y * Math.sin(th) + z * Math.cos(th)];
       const o = rot(-W / 2, zb - hubZ), u = rot(W, 0), v = rot(0, H);
       add([x, yc + o[0], hubZ + o[1]], [0, u[0], u[1]], [0, v[0], v[1]], 2, uv(R_YOKE), R_YOKE[2] / W);
     };
-    yoke(-0.25); yoke(0.35);
-    add([PX, -0.66, PZ0], [0, PW, 0], [0, 0, PH], 1, uv(R_PANEL), S);
-    add([PX, -0.70, -0.45], [0, 1.40, 0], [0, 0, 0.40], 0, hex(C.redSh));
-    add([PX - 0.015, -0.68, TOP - 0.006], [0, 1.36, 0], [0.015, 0, 0.016], 1, uv(R_ROLL), R_ROLL[2] / 1.36);
-    add([PX, -0.68, TOP + 0.01], [0, 1.36, 0], [0.05, 0, 0.008], 1, uv(R_GLARE), R_GLARE[2] / 1.36);
+    yoke(-0.25); yoke(0.27);
+    // painel e pala
+    add([PX, -PW / 2, PZ0], [0, PW, 0], [0, 0, PH], 1, uv(R_PANEL), S);
+    add([PX, -Y, F], [0, 2 * Y, 0], [0, 0, PZ0 - F], 0, hex(C.redSh));
+    add([PX - 0.015, -Y - 0.01, TOP - 0.006], [0, 2 * Y + 0.02, 0], [0.015, 0, 0.016], 1, uv(R_ROLL), R_ROLL[2] / 1.08);
+    add([PX, -Y - 0.01, TOP + 0.01], [0, 2 * Y + 0.02, 0], [0.05, 0, 0.008], 1, uv(R_GLARE), R_GLARE[2] / 1.08);
     add([PX + 0.015, -0.035, TOP + 0.018], [0, 0.07, 0], [0, 0, 0.042], 1, uv(R_COMP), R_COMP[2] / 0.07);
-    add([PX + 0.06, -0.71, TOP + 0.018], [0, 0.06, 0], [-0.45, 0, 0.7], 0, hex(C.leather));
-    add([PX + 0.06, 0.65, TOP + 0.018], [0, 0.06, 0], [-0.45, 0, 0.7], 0, hex(C.leather));
-    add([0.92, -0.72, 1.0], [0, 1.44, 0], [0.02, 0, 0.06], 0, hex(C.leather));
-    add([0.93, -0.72, 1.05], [0, 1.44, 0], [-1.6, 0, 0], 0, hex('#d6cebc'));
-    add([-0.7, -0.70, -0.4], [2.2, 0, 0], [0, 0, 0.66], 1, uv(R_DOOR), R_DOOR[2] / 2.2);
-    add([1.5, 0.70, -0.4], [-2.2, 0, 0], [0, 0, 0.66], 1, uv(R_DOOR), R_DOOR[2] / 2.2);
-    add([-0.62, -0.70, 0.26], [0.09, 0, 0], [0, 0, 0.79], 0, hex(C.creamSh));
-    add([-0.62, 0.70, 0.26], [0.09, 0, 0], [0, 0, 0.79], 0, hex(C.creamSh));
-    add([-0.62, -0.70, 0.23], [2.0, 0, 0], [0, 0.04, 0.03], 0, hex(C.leather));
-    add([-0.62, 0.66, 0.26], [2.0, 0, 0], [0, 0.04, -0.03], 0, hex(C.leather));
-    add([-0.75, -0.72, -0.4], [0, 1.44, 0], [0, 0, 1.45], 0, hex('#b3a890'));          // parede de tras (forro)
-    add([-0.75, -0.72, -0.4], [2.0, 0, 0], [0, 1.44, 0], 0, hex('#3a2a28'));            // piso
+    // montantes do para-brisa, moldura de cima e forro do teto
+    add([1.31, -Y, TOP + 0.015], [0, 0.05, 0], [-0.38, 0, R + 0.01 - TOP - 0.015], 0, hex(C.leather));
+    add([1.31, Y - 0.05, TOP + 0.015], [0, 0.05, 0], [-0.38, 0, R + 0.01 - TOP - 0.015], 0, hex(C.leather));
+    add([0.93, -Y, R - 0.05], [0, 2 * Y, 0], [0.03, 0, 0.05], 0, hex(C.leather));
+    add([0.95, -Y, R], [-2.7, 0, 0], [0, 2 * Y, 0], 1, uv(R_HEAD), R_HEAD[2] / 2.7);
+    for (const s of [-1, 1]) {
+      const yw = s * Y, yi = s < 0 ? -Y : Y - 0.07;
+      // porta da frente: painel de baixo (com janela grande em cima), faixa de cima, apoio de braco
+      add([1.22, yw, F], [-1.07, 0, 0], [0, 0, 0.60], 1, uv(R_DOOR), R_DOOR[2] / 1.07);
+      add([1.22, yw, 0.82], [-1.07, 0, 0], [0, 0, R - 0.82], 0, hex(C.creamSh));
+      box([0.78, yi, 0.17], [0, 0.07, 0], [-0.52, 0, 0], 0.07, C.seat);
+      // coluna entre a porta e a janela de tras
+      box([0.18, s < 0 ? -Y : Y - 0.05, 0.27], [0, 0.05, 0], [0, 0, R - 0.27], -0.08, C.creamSh);
+      // janela lateral de tras: parede de baixo, faixa de cima, coluna de tras
+      add([0.15, yw, F], [-1.15, 0, 0], [0, 0, 0.65], 1, uv(R_DOOR), R_DOOR[2] / 1.15);
+      add([0.15, yw, 0.78], [-1.15, 0, 0], [0, 0, R - 0.78], 0, hex(C.creamSh));
+      add([-1.0, yw, 0.32], [-0.13, 0, 0], [0, 0, 0.46], 0, hex(C.creamSh));
+      // bagageiro (sem janela)
+      add([-1.13, yw, F], [-0.62, 0, 0], [0, 0, R - F], 0, hex('#cfc5ae'));
+    }
+    // parede de tras com a janelinha traseira
+    const XB = -1.75;
+    add([XB, -Y, F], [0, 2 * Y, 0], [0, 0, 0.50 - F], 0, hex('#c8bea6'));
+    add([XB, -Y, 0.50], [0, Y - 0.36, 0], [0, 0, 0.34], 0, hex(C.creamSh));
+    add([XB, 0.36, 0.50], [0, Y - 0.36, 0], [0, 0, 0.34], 0, hex(C.creamSh));
+    add([XB, -Y, 0.84], [0, 2 * Y, 0], [0, 0, R - 0.84], 0, hex(C.creamSh));
+    add([PX, -Y, F], [XB - PX, 0, 0], [0, 2 * Y, 0], 0, hex('#4a2c26'));              // carpete
+    // bancos: estofado vermelho em gomos; encosto inclinado 12 graus
+    const back = (O, w, h) => box(O, [0, w, 0], [-0.208 * h, 0, 0.978 * h], -0.09, C.seat, 0.07);
+    for (const y0 of [-0.47, 0.07]) {
+      box([0.62, y0, -0.20], [0, 0.40, 0], [-0.46, 0, 0], 0.12, C.seat, 0.07);          // assento
+      back([0.15, y0, -0.08], 0.40, 0.50);                                              // encosto
+    }
+    box([-0.40, -0.48, -0.20], [0, 0.96, 0], [-0.42, 0, 0], 0.13, C.seat, 0.08);      // banco de tras
+    back([-0.83, -0.48, -0.07], 0.96, 0.55);
     this.n = n;
+    const gl = this.gl;
+    gl.activeTexture(gl.TEXTURE15);
+    gl.bindTexture(gl.TEXTURE_2D, this.dataTex);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 4, n, gl.RGBA, gl.FLOAT, q.subarray(0, n * 16));
     return q;
   }
 }

@@ -13,7 +13,7 @@
 // (encolhida 1 pixel nas bordas) e o teste de profundidade pula o raymarching ali.
 //
 // Referencial do aviao: x para frente, y para a direita, z para cima (metros, origem no CG).
-import { PanelArt, PANEL, FLAPS, THROTTLE, MIXTURE, R_PANEL, R_COMP, R_EMBLEM, atlasUV } from './cockpit.js';
+import { PanelArt, PANEL, FLAPS, THROTTLE, MIXTURE, GLARE, glareEdgeZ, R_PANEL, R_COMP, R_EMBLEM, R_PED, PED_SCALE, atlasUV } from './cockpit.js';
 
 // ---------------------------------------------------------------------------
 // vetores
@@ -58,6 +58,10 @@ const RB = 0.12, RT = 0.14;          // raios dos cantos de baixo e de cima da s
 const xws = (z) => 1.29 - (z - 0.245) * 0.53;   // linha do para-brisa: (1.29, 0.245) a (1.0, 0.80)
 const PX = PANEL.PX;                  // plano do painel
 const YOKE_Y = [-0.27, 0.27], YOKE_Z = 0.035, YOKE_X = 0.95;
+// pedestal (embaixo do meio do painel), roda do trim e a placa da escala
+const PED = { x: 1.10, hx: 0.05, hy: 0.075, zc: -0.215, hz: 0.155 };
+const TRIMW = { x: 1.13, y: -0.028, z: -0.205, r: 0.072, w: 0.011 };
+const PLATE = { y0: 0.018, y1: 0.062, z0: -0.165, z1: -0.165 - 0.0825 };
 
 // ponto da secao transversal (retangulo arredondado) no comprimento de arco s (0..1, volta inteira)
 function sectionPoint(x, s) {
@@ -322,19 +326,44 @@ function buildStatic(m, sdf) {
       col: [1, 1, 1], mat: M_TEX, ao: true, ref: () => [PX + 1, 0, 0.1],
       uv: (p) => [lerp(uv[0], uv[2], (p[1] - y0) / PANEL.PW), lerp(uv[1], uv[3], (PANEL.TOP - p[2]) / (PANEL.TOP - PANEL.PZ0))],
     });
-    for (const s of [-1, 1]) {
-      const a = s * PANEL.PW / 2, b = s * 0.57;
-      m.plane([PX, a, PANEL.TOP + 0.01], [PX, b, PANEL.TOP + 0.01], [PX, a, PANEL.PZ0], 1, 3, { col: COL.cream, ao: true, ref: () => [PX + 1, 0, 0.1] });
+    for (const s of [-1, 1]) {   // sobras dos lados: creme embaixo, couro da pala descendo em cima
+      const Y = [0, 0.25, 0.5, 0.75, 1], V = [0, 0.5, 1], yAt = (u) => s * lerp(PANEL.PW / 2, 0.57, u);
+      m.surf(Y, V, (u, v) => [PX, yAt(u), lerp(PANEL.PZ0, glareEdgeZ(yAt(u)), v)], { col: COL.cream, ao: true, ref: () => [PX + 1, 0, 0.1] });
+      m.surf(Y, V, (u, v) => [PX, yAt(u), lerp(glareEdgeZ(yAt(u)), PANEL.TOP + 0.01, v)], { col: COL.leather, ao: true, ref: () => [PX + 1, 0, 0.1] });
     }
     m.plane([PX, -0.57, PANEL.PZ0], [PX, 0.57, PANEL.PZ0], [PX, -0.57, -0.16], 12, 1, { col: COL.redDk, ao: true, ref: () => [PX + 1, 0, 0.1] });
     m.plane([PX, -0.57, -0.16], [PX, 0.57, -0.16], [X_FWD, -0.57, -0.42], 12, 3, { col: COL.carpet, ao: true, ref: () => [PX + 1, 0, 0.3] });
   }
   // ----- pala de couro preto, arredondada, por cima do painel -----
   {
-    const prof = [[PX + 0.004, 0.241], [1.193, 0.244], [1.187, 0.252], [1.19, 0.26], [1.20, 0.265], [1.22, 0.266], [1.29, 0.247], [1.32, 0.243]];
+    // tampo: da borda arredondada ate a base do para-brisa
+    const top = GLARE.z + 0.011;
+    const prof = [[PX - 0.004, top], [1.215, top + 0.002], [1.25, top - 0.004], [1.29, 0.247], [1.32, 0.243]];
     const ys = []; for (let y = -0.57; y <= 0.5701; y += 0.095) ys.push(y);
-    m.extrude(prof, ys, { col: COL.leather, ao: true, ref: [1.3, 0.2] });
-    sdf.box([1.24, 0, 0.25], IDENT, [0.05, 0.57, 0.012], 0.0);
+    m.extrude(prof, ys, { col: COL.leather, ao: true, ref: [1.25, 0.1] });
+    sdf.box([1.25, 0, 0.255], IDENT, [0.05, 0.57, 0.012], 0.0);
+    // faixa de couro entre o alto do painel e o tampo (nos cantos a borda desce e ela aparece)
+    m.plane([PX + 0.0005, -0.57, top + 0.001], [PX + 0.0005, 0.57, top + 0.001], [PX + 0.0005, -0.57, PANEL.TOP - 0.006], 12, 1, { col: COL.leather, ao: true, ref: () => [PX + 1, 0, 0.2] });
+    // friso arredondado da borda: reto no meio e descendo em arco nos cantos (varrido ao longo do caminho)
+    const yEnd = 0.565, zEnd = 0.05;
+    const segs = [];   // caminho no plano do painel: (y, z) por comprimento de arco
+    const pathPt = (t) => {   // t: -1..1 de ponta a ponta
+      const L0 = GLARE.z - GLARE.r - zEnd, La = GLARE.r * Math.PI / 2, Lc = GLARE.yc, tot = L0 + La + Lc;
+      let d = Math.abs(t) * tot, sg = t < 0 ? -1 : 1, y, z;
+      if (d <= Lc) { y = d; z = GLARE.z; }
+      else if (d <= Lc + La) { const a = (d - Lc) / GLARE.r; y = GLARE.yc + GLARE.r * Math.sin(a); z = GLARE.z - GLARE.r + GLARE.r * Math.cos(a); }
+      else { y = GLARE.yc + GLARE.r; z = GLARE.z - GLARE.r - (d - Lc - La); }
+      return [sg * Math.min(y, yEnd), z];
+    };
+    const T = []; for (let k = 0; k <= 80; k++) T.push(-1 + 2 * k / 80);
+    const A = []; for (let k = 0; k <= 10; k++) A.push(-Math.PI / 2 + Math.PI * k / 10);
+    m.surf(T, A, (t, a) => {
+      const [y, z] = pathPt(t), [y2, z2] = pathPt(Math.min(t + 1e-3, 1)), [y1, z1] = pathPt(Math.max(t - 1e-3, -1));
+      let ty = y2 - y1, tz = z2 - z1; const l = Math.hypot(ty, tz) || 1; ty /= l; tz /= l;
+      let ny = -tz, nz = ty;                              // normal no plano do painel
+      if (ny * -y + nz * (0.1 - z) < 0) { ny = -ny; nz = -nz; }   // aponta para o creme (centro do painel)
+      return [PX - 0.002 - 0.016 * Math.cos(a), y + ny * 0.011 * Math.sin(a), z + nz * 0.011 * Math.sin(a)];
+    }, { col: COL.leather, ao: true, ref: (p) => [PX + 0.02, p[1] * 0.98, p[2] - 0.0] });
     // bussola em cima da pala, no meio
     m.rbox([1.245, 0, 0.283], IDENT, [0.04, 0.042, 0.024], 0.008, { col: COL.black, ao: true, sdf });
     const cu = atlasUV(R_COMP);
@@ -351,9 +380,9 @@ function buildStatic(m, sdf) {
   // ----- bancos -----
   const fabric = { col: COL.seat, mat: M_SEAT, ao: true, sdf, uv: seatUV, step: 0.09 };
   for (const y0 of YOKE_Y) {
-    m.rbox([0.43, y0, -0.165], IDENT, [0.235, 0.215, 0.07], 0.055, fabric);
-    m.rbox([0.14, y0, 0.15], tilt(rad(12)), [0.055, 0.215, 0.26], 0.05, fabric);
-    m.rbox([0.43, y0, -0.29], IDENT, [0.16, 0.15, 0.06], 0.02, { col: COL.dark, ao: true, sdf });
+    m.rbox([0.43, y0, -0.195], IDENT, [0.235, 0.215, 0.07], 0.055, fabric);
+    m.rbox([0.14, y0, 0.12], tilt(rad(12)), [0.055, 0.215, 0.26], 0.05, fabric);
+    m.rbox([0.43, y0, -0.32], IDENT, [0.16, 0.15, 0.05], 0.02, { col: COL.dark, ao: true, sdf });
   }
   m.rbox([-0.70, 0, -0.19], IDENT, [0.22, 0.47, 0.07], 0.055, fabric);
   m.rbox([-1.03, 0, 0.10], tilt(rad(15)), [0.06, 0.47, 0.25], 0.05, fabric);
@@ -363,12 +392,18 @@ function buildStatic(m, sdf) {
     m.rbox([0.98, s * 0.548, 0.19], IDENT, [0.035, 0.012, 0.009], 0.006, { col: COL.chrome, mat: M_CHROME });
     m.rbox([-0.72, s * 0.530, 0.07], IDENT, [0.18, 0.032, 0.026], 0.016, { col: COL.redDk, ao: true, sdf });
   }
-  // ----- console do trim entre os bancos e a roda do trim -----
-  m.rbox([0.74, 0, -0.30], IDENT, [0.12, 0.05, 0.11], 0.025, { col: COL.dark, ao: true, sdf });
-  m.cyl([0.74, -0.014, -0.215], [0.74, 0.014, -0.215], 0.075, { col: COL.black }, 18);
+  // ----- pedestal embaixo do meio do painel: roda do trim e a placa com a escala -----
+  m.rbox([PED.x + PED.hx, 0, PED.zc], IDENT, [PED.hx, PED.hy, PED.hz], 0.014, { col: COL.dark, ao: true, sdf });
+  {
+    const pu = atlasUV(R_PED), x = PED.x - 0.0008;
+    m.plane([x, PLATE.y0, PLATE.z0], [x, PLATE.y1, PLATE.z0], [x, PLATE.y0, PLATE.z1], 1, 1, {
+      col: [1, 1, 1], mat: M_TEX, ref: () => [x + 1, 0, PLATE.z0], uv: (p, u, v) => [lerp(pu[0], pu[2], u), lerp(pu[1], pu[3], v)] });
+    // fenda da roda
+    m.rbox([PED.x - 0.001, TRIMW.y, TRIMW.z], IDENT, [0.003, 0.02, 0.085], 0.002, { col: COL.black });
+  }
   // seletor de combustivel no assoalho
-  m.rbox([1.02, 0, -0.37], IDENT, [0.05, 0.05, 0.02], 0.01, { col: COL.dark, ao: true });
-  m.rbox([1.02, 0, -0.34], IDENT, [0.045, 0.012, 0.012], 0.008, { col: COL.knobRed });
+  m.rbox([0.98, 0, -0.37], IDENT, [0.05, 0.05, 0.02], 0.01, { col: COL.dark, ao: true });
+  m.rbox([0.98, 0, -0.34], IDENT, [0.045, 0.012, 0.012], 0.008, { col: COL.knobRed });
   // ----- colunas dos manches e botoes fixos (mistura) -----
   for (const y0 of YOKE_Y) {
     m.lathe([PX - 0.04, y0, YOKE_Z], [PX + 0.001, y0, YOKE_Z],
@@ -379,7 +414,7 @@ function buildStatic(m, sdf) {
     m.cyl([PX, y, z], [x0, y, z], 0.004, { col: COL.chrome, mat: M_CHROME }, 8);
     m.capsule([x0, y, z], [x0 - 0.018, y, z], 0.013, { col: COL.knobRed }, 12);
   }
-  sdf.box([0.43, -0.27, -0.165], IDENT, [0.18, 0.16, 0.015], 0.055);
+  sdf.box([0.43, -0.27, -0.195], IDENT, [0.18, 0.16, 0.015], 0.055);
 }
 
 // ----- o aviao visto de dentro (fixo) -----
@@ -433,7 +468,7 @@ function buildExterior(m) {
       return [x, hw * Math.sign(s) * Math.abs(s) ** e, cz + hz * Math.sign(c) * Math.abs(c) ** e];
     }, { col: (p) => (Math.abs(p[1]) < 0.012 && p[0] > 1.5 ? COL.creamDk : white), mat: M_EXT, ref: (p) => [p[0], 0, 0.0] });
     // friso da base do para-brisa
-    m.extrude([[1.285, 0.246], [1.315, 0.255], [1.35, 0.255]], [-0.575, 0.575], { col: COL.dark, mat: M_EXT, ref: [1.32, 0.0] });
+    m.extrude([[1.285, 0.246], [1.315, 0.255], [1.35, 0.255]], [-0.55, 0.55], { col: COL.dark, mat: M_EXT, ref: [1.32, 0.0] });
     // spinner vermelho
     const prof = [];
     for (let k = 0; k <= 6; k++) {
@@ -528,13 +563,13 @@ function matAlong(a, b) {
 const xform = (M, p) => [M[0] * p[0] + M[4] * p[1] + M[8] * p[2] + M[12], M[1] * p[0] + M[5] * p[1] + M[9] * p[2] + M[13], M[2] * p[0] + M[6] * p[1] + M[10] * p[2] + M[14]];
 
 // pose do piloto e das pecas (tambem usada para posicionar os membros)
-const HIP = (s) => [0.30, -0.27 + s * 0.09, -0.05];
-const KNEE = (s) => [0.80, -0.27 + s * 0.10, 0.0];
-const PED = (y0, s) => [1.255, y0 + s * 0.09, -0.275];
-const ANKLE = (s) => { const p = PED(YOKE_Y[0], s); return [p[0] - 0.045, p[1], p[2] + 0.03]; };
+const HIP = (s) => [0.30, -0.27 + s * 0.09, -0.08];
+const KNEE = (s) => [0.80, -0.27 + s * 0.10, -0.03];
+const PEDAL = (y0, s) => [1.255, y0 + s * 0.09, -0.275];
+const ANKLE = (s) => { const p = PEDAL(YOKE_Y[0], s); return [p[0] - 0.045, p[1], p[2] + 0.03]; };
 const L_THIGH = len(sub(KNEE(-1), HIP(-1))), L_SHIN = len(sub(ANKLE(-1), KNEE(-1)));
 const L_UP = 0.33, L_FORE = 0.30;
-const SH_L = [0.47, -0.45, 0.27], SH_R = [0.47, -0.10, 0.26];
+const SH_L = [0.47, -0.45, 0.24], SH_R = [0.47, -0.10, 0.23];
 const GRIP_L = [YOKE_X - 0.04, YOKE_Y[0] - 0.142, YOKE_Z + 0.07];
 const KNOB0 = PX - 0.028;   // botao da manete todo empurrado
 
@@ -566,15 +601,32 @@ function buildParts() {
     m.rbox([PX - 0.012, FLAPS.y, FLAPS.z0], IDENT, [0.012, 0.004, 0.006], 0.003, { col: COL.chrome, mat: M_CHROME });
     m.rbox([PX - 0.03, FLAPS.y, FLAPS.z0], IDENT, [0.008, 0.022, 0.009], 0.006, { col: COL.white });
   });
+  // ----- roda do trim (com ressaltos para ver girar), ponteiro do trim e ponteiro dos flaps -----
+  part('trimw', 'ctl', (m) => {
+    m.cyl([TRIMW.x, TRIMW.y - TRIMW.w, TRIMW.z], [TRIMW.x, TRIMW.y + TRIMW.w, TRIMW.z], TRIMW.r, { col: COL.black }, 28);
+    for (let k = 0; k < 18; k++) {
+      const a = k / 18 * Math.PI * 2, c = [TRIMW.x + Math.cos(a) * TRIMW.r, TRIMW.y, TRIMW.z + Math.sin(a) * TRIMW.r];
+      m.rbox(c, [[Math.cos(a), 0, Math.sin(a)], [0, 1, 0], [-Math.sin(a), 0, Math.cos(a)]], [0.006, TRIMW.w * 0.9, 0.007], 0.003, { col: COL.dark });
+    }
+  });
+  part('trimp', 'ctl', (m) => {
+    const y = lerp(PLATE.y0, PLATE.y1, 0.5), z = PLATE.z0;
+    m.rbox([PED.x - 0.004, y, z], IDENT, [0.003, 0.012, 0.0035], 0.002, { col: COL.yellow });
+  });
+  part('flapp', 'ctl', (m) => {   // ponteiro laranja ao lado do trilho: mostra onde os flaps estao de fato
+    const b = m.n, x = PX - 0.004, y = FLAPS.y - 0.011, z = FLAPS.z0;
+    for (const p of [[x, y + 0.004, z], [x, y - 0.010, z + 0.006], [x, y - 0.010, z - 0.006]]) m.vert(p, [-1, 0, 0], hex('#ff9a1e'), M_IN);
+    m.i.push(b, b + 1, b + 2);
+  });
   // ----- pedais (e os pes do piloto nos da esquerda) -----
   YOKE_Y.forEach((y0, i) => [-1, 1].forEach((s) => part(`ped${i}${s}`, 'ctl', (m) => {
-    const c = PED(y0, s);
+    const c = PEDAL(y0, s);
     m.rbox(c, tilt(rad(-22)), [0.012, 0.045, 0.065], 0.008, { col: COL.dark });
     m.cyl([c[0] + 0.01, c[1], c[2] + 0.06], [c[0] + 0.08, c[1], c[2] + 0.26], 0.008, { col: COL.dark }, 6);
     if (i === 0) m.rbox([c[0] - 0.035, c[1], c[2] + 0.005], tilt(rad(30)), [0.10, 0.042, 0.035], 0.03, { col: COL.shoe });
   })));
   // ----- piloto: tronco fixo, membros como capsulas de comprimento fixo ao longo do x local -----
-  part('torso', 'body', (m) => m.capsule([0.33, -0.27, -0.03], [0.40, -0.27, 0.20], 0.145, { col: COL.shirt }, 14));
+  part('torso', 'body', (m) => m.capsule([0.33, -0.27, -0.06], [0.40, -0.27, 0.17], 0.145, { col: COL.shirt }, 14));
   const limb = (name, L, r, col) => part(name, 'body', (m) => m.capsule([0, 0, 0], [L, 0, 0], r, { col }, 10));
   for (const s of [-1, 1]) { limb('thigh' + s, L_THIGH, 0.075, COL.jeans); limb('shin' + s, L_SHIN, 0.056, COL.jeans); }
   for (const k of ['L', 'R']) {
@@ -596,6 +648,13 @@ function buildParts() {
   return parts;
 }
 
+// onde a mao direita vai: manete (normal), alavanca dos flaps ou roda do trim
+function handTarget(what, st) {
+  if (what === 'lever') return [PX - 0.048, FLAPS.y, lerp(FLAPS.z0, FLAPS.z1, st.lever / 3)];
+  if (what === 'trim') return [TRIMW.x - TRIMW.r - 0.025, TRIMW.y + 0.005, TRIMW.z + 0.03];
+  return [KNOB0 - 0.075 * (1 - st.thr) - 0.045, THROTTLE.y - 0.005, THROTTLE.z + 0.01];
+}
+
 // matriz de cada parte para o estado st
 function partMatrices(st) {
   const M = {};
@@ -604,6 +663,9 @@ function partMatrices(st) {
   const kd = -0.075 * (1 - st.thr);
   M.thr = matT([kd, 0, 0]);
   M.lever = matT([0, 0, (FLAPS.z1 - FLAPS.z0) * st.lever / 3]);
+  M.flapp = matT([0, 0, (FLAPS.z1 - FLAPS.z0) * st.flap]);
+  M.trimw = matAxis([0, 1, 0], st.trim * 9, [TRIMW.x, TRIMW.y, TRIMW.z]);
+  M.trimp = matT([0, 0, (PLATE.z1 - PLATE.z0) * lerp(PED_SCALE.v0, PED_SCALE.v1, clamp((st.trim + 0.4) / 0.8, 0, 1))]);
   const pd = {};
   YOKE_Y.forEach((y0, i) => [-1, 1].forEach((s) => { pd[`${i}${s}`] = s * 0.045 * st.rud; M[`ped${i}${s}`] = matT([pd[`${i}${s}`], 0, 0]); }));
   M.torso = MAT_I;
@@ -614,8 +676,11 @@ function partMatrices(st) {
     M['shin' + s] = matAlong(knee, ank);
   }
   const grip = xform(M.yoke0, GRIP_L);
-  const knob = [KNOB0 + kd - 0.045, THROTTLE.y - 0.005, THROTTLE.z + 0.01];
-  for (const [k, S, H, hint] of [['L', SH_L, add(grip, [0, -0.012, 0]), [-0.3, -0.5, -1]], ['R', SH_R, knob, [-0.4, 0.4, -1]]]) {
+  const hand = st.hand || handTarget('thr', st);
+  for (const [k, S0, H, hint] of [['L', SH_L, add(grip, [0, -0.012, 0]), [-0.3, -0.5, -1]], ['R', SH_R, hand, [-0.4, 0.4, -1]]]) {
+    // longe demais: o tronco se inclina (o ombro avanca na direcao da mao)
+    const dd = sub(H, S0), far = len(dd) - (L_UP + L_FORE - 0.03);
+    const S = far > 0 ? add(S0, mul(norm(dd), far)) : S0;
     const [E, W] = ik(S, H, L_UP, L_FORE, hint);
     M['up' + k] = matAlong(S, E);
     M['fore' + k] = matAlong(E, W);
@@ -905,7 +970,7 @@ export class Cabin {
     this.glass = this.upload(gm, gl.STATIC_DRAW);
     this.parts = buildParts().map((q) => ({ name: q.name, group: q.group, buf: this.upload(q.m, gl.STATIC_DRAW) }));
     this.ntris = (st.i.length + pr.i.length) / 3 + this.parts.reduce((a, q) => a + q.buf.count / 3, 0);
-    this.M = partMatrices({ elev: 0, ail: 0, thr: 0, lever: 0, rud: 0, flap: 0 });
+    this.M = partMatrices({ elev: 0, ail: 0, thr: 0, lever: 0, rud: 0, flap: 0, trim: 0 });
     this.body = true;
     // mapa de sombra
     this.SH = 1024;
@@ -985,7 +1050,21 @@ export class Cabin {
     // olhando para tras o corpo do piloto some (o tronco gira junto com a cabeca)
     const yaw = Math.atan2(this.vf[1], this.vf[0]);
     this.body = Math.abs(yaw) < 1.45;
-    this.M = partMatrices({ elev: I[78], ail: I[79], thr: I[80], lever: I[81], rud: I[82], flap: I[74] / 30 });
+    const st = { elev: I[78], ail: I[79], thr: I[80], lever: I[81], rud: I[82], flap: I[74] / 30, trim: I[75] };
+    // mao direita: vai mexer na alavanca dos flaps ou na roda do trim e depois volta para a manete
+    this.clock = (this.clock || 0) + this.dt;   // relogio proprio (passo limitado): igual ao real a 60 fps
+    const tk = this.clock * 1000;
+    if (this.lastLever === undefined) { this.lastLever = st.lever; this.lastTrim = st.trim; this.leverT = this.trimT = 0; }
+    if (st.lever !== this.lastLever) { this.lastLever = st.lever; this.leverT = tk + 1500; }
+    if (Math.abs(st.trim - this.lastTrim) > 1e-5) this.trimT = tk + 900;
+    this.lastTrim = st.trim;
+    const want = tk < this.trimT ? 'trim' : tk < this.leverT ? 'lever' : 'thr';
+    const tgt = handTarget(want, st);
+    if (!this.hand) this.hand = tgt;
+    const kh = 1 - Math.exp(-this.dt * 8);
+    this.hand = add(this.hand, mul(sub(tgt, this.hand), kh));
+    st.hand = this.hand;
+    this.M = partMatrices(st);
     // matriz da sombra: projecao ortografica ao longo do sol, ~8 m em volta da cabine
     const Ls = this.sunB, hint = Math.abs(Ls[2]) < 0.95 ? [0, 0, 1] : [1, 0, 0];
     const lx = norm(cross(hint, Ls)), ly = cross(Ls, lx), C = [-0.3, 0, 0.3], E = 4.2, Dz = 9;
@@ -1174,7 +1253,7 @@ export function buildForTest() {
   const pr = new Mesh();
   buildProp(pr);
   const t1 = performance.now();
-  for (let k = 0; k < 1000; k++) partMatrices({ elev: Math.sin(k), ail: 0.3, thr: 0.5, lever: 2, rud: 0.1, flap: 0.6 });
+  for (let k = 0; k < 1000; k++) partMatrices({ elev: Math.sin(k), ail: 0.3, thr: 0.5, lever: 2, rud: 0.1, flap: 0.6, trim: 0.1 });
   return { st, dy, pr, ms: Date.now() - t0, matUs: (performance.now() - t1) };
 }
 

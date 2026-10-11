@@ -1,8 +1,9 @@
 // cockpit.js - arte do painel (Canvas 2D) para a cabine 3D (ver cabin.js).
 //
-// So os instrumentos que ajudam a voar, em estilo de jogo (claros, com mostrador digital):
-// velocimetro, horizonte artificial e altimetro em cima; RPM, proa e variometro embaixo;
-// a regua do trim e o trilho da alavanca dos flaps. A parte fixa e desenhada uma vez; os
+// Os seis instrumentos no arranjo padrao ("six-pack"): velocimetro, horizonte e altimetro em
+// cima; coordenador de curva (com a bolinha), proa e variometro embaixo; o RPM a direita,
+// embaixo, como em varios 172 antigos. Estilo de jogo (claros, com mostrador digital).
+// O trilho da alavanca dos flaps fica no painel; o trim e uma roda no pedestal (placa propria). A parte fixa e desenhada uma vez; os
 // ponteiros sao redesenhados quando os valores mudam, em recortes pequenos enviados a GPU.
 // A bussola da pala tem a sua propria regiao no atlas.
 
@@ -71,7 +72,7 @@ function gaugeBase(c, cy, cz, r) {
 }
 
 // ---------- instrumentos ----------
-const r6 = 0.037, z1 = 0.19, z2 = 0.102, xs = [-0.37, -0.27, -0.17];
+const r6 = 0.037, z1 = 0.19, z2 = 0.102, xs = [-0.37, -0.27, -0.17], RPM_Y = -0.065;
 const ASI = (v) => -140 + 280 * Math.min(Math.max(v, 0), 180) / 180;
 const VSIA = (v) => -90 + Math.max(-2000, Math.min(2000, v)) / 2000 * 115;
 const TACH = (v) => -130 + 260 * Math.min(Math.max(v, 0), 3500) / 3500;
@@ -114,12 +115,29 @@ const GAUGES = [
       needle(c, x, y, R, ((I.ft % 10000) + 10000) % 10000 / 10000 * 360, 0.5, 0.12);
       needle(c, x, y, R, ((I.ft % 1000) + 1000) % 1000 / 1000 * 360, 0.86, 0.07);
     } },
-  { y: xs[0], z: z2, r: r6, face(c, x, y, R) {    // conta-giros
-      band(c, x, y, R * 0.86, TACH(2100), TACH(2700), C.green, R * 0.12);
-      line(c, angPt(x, y, R * 0.96, TACH(2700)), angPt(x, y, R * 0.7, TACH(2700)), C.redArc, R * 0.07, 'butt');
-      ticks(c, x, y, R, TACH(0), TACH(3500), 7, 1);
-      for (const v of [10, 20, 30]) label(c, x, y, R, TACH(v * 100), String(v), R * 0.25, 0.6);
-    }, hands(c, x, y, R, I) { readout(c, x, y, R, String(round(I.rpm, 10))); text(c, x, y + R * 0.78, 'RPM', R * 0.15, C.mark); needle(c, x, y, R, TACH(I.rpm)); } },
+  { y: xs[0], z: z2, r: r6, face(c, x, y, R) {    // coordenador de curva: aviaozinho e bolinha
+      for (const d of [-90, 90]) line(c, angPt(x, y, R * 0.96, d), angPt(x, y, R * 0.76, d), C.mark, R * 0.06, 'butt');
+      for (const d of [-110, 110]) line(c, angPt(x, y, R * 0.96, d), angPt(x, y, R * 0.76, d), C.mark, R * 0.06, 'butt');
+      text(c, x - R * 0.72, y + R * 0.48, 'L', R * 0.2, C.mark); text(c, x + R * 0.72, y + R * 0.48, 'R', R * 0.2, C.mark);
+      text(c, x, y - R * 0.55, 'TURN', R * 0.13, C.mark);
+      // tubo da bolinha (curvo, embaixo)
+      c.beginPath(); c.arc(x, y - R * 1.15, R * 1.62, rad(90 - 17), rad(90 + 17)); c.strokeStyle = '#000'; c.lineWidth = R * 0.24; c.lineCap = 'round'; c.stroke();
+      c.beginPath(); c.arc(x, y - R * 1.15, R * 1.62, rad(90 - 16), rad(90 + 16)); c.strokeStyle = '#d8d2bd'; c.lineWidth = R * 0.17; c.stroke();
+      for (const s of [-1, 1]) { const a = rad(90 + s * 4.2); line(c, [x + R * 1.62 * Math.cos(a), y - R * 1.15 + R * 1.62 * Math.sin(a) - R * 0.11], [x + R * 1.62 * Math.cos(a), y - R * 1.15 + R * 1.62 * Math.sin(a) + R * 0.11], '#000', R * 0.035, 'butt'); }
+    }, hands(c, x, y, R, I) {
+      // bolinha: cai para o lado para onde o aviao escorrega (beta > 0 = escorregando a direita); "pise na bola"
+      const k = Math.max(-1, Math.min(1, I.slip * 57.3 / 8)), a = rad(90 - k * 13);
+      circle(c, x + R * 1.62 * Math.cos(a), y - R * 1.15 + R * 1.62 * Math.sin(a), R * 0.08, '#111', '#000', R * 0.02);
+      // aviaozinho: curva padrao (3 graus/s) encosta na marca L ou R
+      const bank = Math.max(-28, Math.min(28, I.turn / 3 * 20));
+      c.save(); c.translate(x, y); c.rotate(rad(bank)); c.lineJoin = 'round'; c.lineCap = 'round';
+      for (const [col, w] of [['#000', R * 0.15], [C.mark, R * 0.09]]) {
+        c.beginPath(); c.moveTo(-R * 0.78, 0); c.lineTo(R * 0.78, 0); c.moveTo(0, -R * 0.2); c.lineTo(0, R * 0.02);
+        c.moveTo(-R * 0.2, -R * 0.14); c.lineTo(R * 0.2, -R * 0.14); c.strokeStyle = col; c.lineWidth = w; c.stroke();
+      }
+      circle(c, 0, 0, R * 0.1, C.mark, '#000', R * 0.03);
+      c.restore();
+    } },
   { y: xs[1], z: z2, r: r6, dynamicFace: true, hands(c, x, y, R, I) {   // proa: a rosa gira
       for (let i = 0; i < 36; i++) {
         const d = i * 10 - I.hdg, big = i % 3 === 0;
@@ -142,13 +160,21 @@ const GAUGES = [
       text(c, x + R * 0.57, y + R * 0.01, (v > 0 ? '+' : '') + v, R * 0.24, C.mark);
       needle(c, x, y, R, VSIA(I.fpm));
     } },
+  { y: RPM_Y, z: z2, r: r6, face(c, x, y, R) {    // conta-giros (a direita, embaixo)
+      band(c, x, y, R * 0.86, TACH(2100), TACH(2700), C.green, R * 0.12);
+      line(c, angPt(x, y, R * 0.96, TACH(2700)), angPt(x, y, R * 0.7, TACH(2700)), C.redArc, R * 0.07, 'butt');
+      ticks(c, x, y, R, TACH(0), TACH(3500), 7, 1);
+      for (const v of [10, 20, 30]) label(c, x, y, R, TACH(v * 100), String(v), R * 0.25, 0.6);
+    }, hands(c, x, y, R, I) { readout(c, x, y, R, String(round(I.rpm, 10))); text(c, x, y + R * 0.78, 'RPM', R * 0.15, C.mark); needle(c, x, y, R, TACH(I.rpm)); } },
 ];
 
-// trim (regua) e trilho da alavanca dos flaps (a alavanca em si e 3D)
-const TRIM = { y0: -0.098, z0: 0.215, y1: -0.078, z1: 0.07 };
+// trilho da alavanca dos flaps (a alavanca e o ponteiro sao 3D), manete e mistura
 export const FLAPS = { y: 0.05, z0: 0.205, z1: 0.085 };          // posicoes 0 (em cima) a 30 (embaixo)
-export const THROTTLE = { y: -0.02, z: 0.03 };                  // manete (empurrar = potencia)
-export const MIXTURE = { y: 0.03, z: 0.03 };
+export const THROTTLE = { y: 0.005, z: 0.03 };                  // manete (empurrar = potencia)
+export const MIXTURE = { y: 0.05, z: 0.03 };
+// pala: borda de baixo reta no meio e descendo arredondada nos cantos (y, z do centro do arco, raio)
+export const GLARE = { z: 0.252, yc: 0.36, r: 0.16 };
+export const glareEdgeZ = (y) => { const d = Math.abs(y) - GLARE.yc; return d <= 0 ? GLARE.z : (GLARE.z - GLARE.r) + Math.sqrt(Math.max(GLARE.r * GLARE.r - d * d, 0)); };
 
 function drawStatic(c) {
   // painel creme com a borda de cima arredondada; faixa vermelho-escura embaixo
@@ -156,22 +182,15 @@ function drawStatic(c) {
   let a = P(-PW / 2, TOP), b = P(PW / 2, PZ0);
   rrect(c, a[0], a[1], b[0], b[1], M(0.03), C.cream);
   a = P(-PW / 2, 0.012); c.fillStyle = C.redSh; c.fillRect(a[0], a[1], M(PW), M(0.012 - PZ0));
-  a = P(-PW / 2 + 0.01, TOP - 0.004); b = P(PW / 2 - 0.01, TOP - 0.014);
-  rrect(c, a[0], a[1], b[0], b[1], M(0.02), C.creamHi);
   // moldura funda dos instrumentos (sombra embaixo)
   a = P(-0.43, 0.243); b = P(-0.11, 0.052);
+  rrect(c, a[0], a[1], b[0], b[1], M(0.02), C.creamSh);
+  a = P(-0.115, 0.152); b = P(-0.015, 0.052);
   rrect(c, a[0], a[1], b[0], b[1], M(0.02), C.creamSh);
   for (const g of GAUGES) {
     const [x, y, R] = gaugeBase(c, g.y, g.z, g.r);
     if (g.face) g.face(c, x, y, R);
   }
-  // trim
-  { const p0 = P(TRIM.y0, TRIM.z0), p1 = P(TRIM.y1, TRIM.z1);
-    rrect(c, p0[0], p0[1], p1[0], p1[1], M(0.004), C.face, C.blackHi, M(0.002));
-    text(c, (p0[0] + p1[0]) / 2, p1[1] + M(0.01), 'TRIM', M(0.0105), C.ink);
-    text(c, p1[0] + M(0.004), p0[1] + M(0.01), 'DN', M(0.0085), C.ink, 'left');
-    text(c, p1[0] + M(0.004), p1[1] - M(0.01), 'UP', M(0.0085), C.ink, 'left');
-    const ym = (p0[1] + p1[1]) / 2; line(c, [p0[0] + 3, ym], [p1[0] - 3, ym], C.mark, M(0.0015)); }
   // trilho dos flaps
   { const p0 = P(FLAPS.y - 0.006, FLAPS.z0 + 0.01), p1 = P(FLAPS.y + 0.006, FLAPS.z1 - 0.01);
     rrect(c, p0[0], p0[1], p1[0], p1[1], M(0.005), '#2a2622', C.out, M(0.0015));
@@ -184,12 +203,29 @@ function drawStatic(c) {
     text(c, x, y - M(0.022), t, M(0.0075), '#e8e0cc');
   }
   // difusores de ar e porta-luvas
-  for (const [vy, vz] of [[-0.48, 0.2], [0.3, 0.2], [0.46, 0.2]]) { const [x, y] = P(vy, vz); circle(c, x, y, M(0.022), C.blackHi, C.out, 2); circle(c, x, y, M(0.012), '#1a1a1e'); circle(c, x - M(0.005), y - M(0.005), M(0.004), '#5a5a62'); }
+  for (const [vy, vz] of [[-0.455, 0.15], [0.30, 0.2], [0.445, 0.15]]) { const [x, y] = P(vy, vz); circle(c, x, y, M(0.022), C.blackHi, C.out, 2); circle(c, x, y, M(0.012), '#1a1a1e'); circle(c, x - M(0.005), y - M(0.005), M(0.004), '#5a5a62'); }
   a = P(0.20, 0.15); b = P(0.48, 0.045); rrect(c, a[0], a[1], b[0], b[1], M(0.012), C.creamHi, C.creamSh, M(0.003));
   a = P(0.30, 0.135); b = P(0.38, 0.125); rrect(c, a[0], a[1], b[0], b[1], M(0.004), C.chrome, C.out, 1.5);
   // interruptores na faixa de baixo
   for (let i = 0; i < 6; i++) { const [x, y] = P(-0.47 + i * 0.035, -0.02); rrect(c, x - M(0.009), y - M(0.016), x + M(0.009), y + M(0.016), 3, '#eeeae2', C.out, 1.5); }
   { const [x, y] = P(-0.20, -0.02); circle(c, x, y, M(0.014), C.chromeSh, C.out, 2); circle(c, x, y, M(0.006), '#222'); }
+  // couro da pala por cima: faixa no alto e cantos que descem arredondados
+  c.beginPath();
+  for (let i = 0; i <= 120; i++) { const yy = -PW / 2 + PW * i / 120; const q = P(yy, glareEdgeZ(yy) - 0.004); i ? c.lineTo(q[0], q[1]) : c.moveTo(q[0], q[1]); }
+  a = P(PW / 2, TOP + 0.01); c.lineTo(a[0], a[1]); a = P(-PW / 2, TOP + 0.01); c.lineTo(a[0], a[1]); c.closePath();
+  c.fillStyle = C.leather; c.fill();
+}
+
+// placa do pedestal (trim): 160 x 300 texels, escala com "DN" em cima e "UP" embaixo
+function drawPed(c) {
+  rrect(c, 2, 2, 158, 298, 18, '#2c2b2f', '#111', 3);
+  text(c, 80, 26, 'TRIM', 24, '#e8e2d0');
+  rrect(c, 60, 48, 100, 262, 8, '#121214', '#000', 2);
+  for (let k = 0; k <= 8; k++) { const yy = 58 + k * 24.5; line(c, [104, yy], [k % 4 === 0 ? 128 : 118, yy], '#e8e2d0', 3, 'butt'); }
+  text(c, 136, 60, 'DN', 18, '#e8e2d0', 'left'); text(c, 136, 254, 'UP', 18, '#e8e2d0', 'left');
+  rrect(c, 108, 150, 156, 166, 4, '#3a8a3a');
+  text(c, 30, 158, 'T.O.', 16, '#9fd59f');
+  text(c, 80, 284, 'NOSE', 16, '#bdb6a4');
 }
 
 function drawCompass(c, hdg) {   // 200 x 120: faixa de proa grande e legivel
@@ -215,6 +251,8 @@ function drawEmblem(c) {   // 300 x 100: emblema do manche
 export const R_PANEL = [0, 0, Math.ceil(M(PW)), Math.ceil(M(PH))];
 export const R_COMP = [16, 560, 200, 120];
 export const R_EMBLEM = [240, 560, 300, 100];
+export const R_PED = [560, 560, 160, 300];
+export const PED_SCALE = { v0: 58 / 300, v1: 254 / 300 };   // fracao da placa: DN (trim -0.4) e UP (+0.4)
 export const atlasUV = (R) => [R[0] / ATW, R[1] / ATH, (R[0] + R[2]) / ATW, (R[1] + R[3]) / ATH];
 
 export class PanelArt {
@@ -225,6 +263,7 @@ export class PanelArt {
     const c = at.getContext('2d');
     drawStatic(c);
     c.save(); c.translate(R_EMBLEM[0], R_EMBLEM[1]); drawEmblem(c); c.restore();
+    c.save(); c.translate(R_PED[0], R_PED[1]); drawPed(c); c.restore();
     this.atlas = at;
     this.dyn = GAUGES.map((g) => {
       const [x, y] = P(g.y, g.z), h = Math.ceil(g.r * S * 1.22);
@@ -232,10 +271,6 @@ export class PanelArt {
       const cv = document.createElement('canvas'); cv.width = w; cv.height = w;
       return { g, bx, by, cv, x: x - bx, y: y - by, R: g.r * S };
     });
-    { const p0 = P(TRIM.y0, TRIM.z0), p1 = P(TRIM.y1, TRIM.z1);
-      const bx = Math.floor(p0[0] - 4), by = Math.floor(p0[1] - 2), w = Math.ceil(p1[0] - p0[0] + 8), h = Math.ceil(p1[1] - p0[1] + 4);
-      const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
-      this.dyn.push({ trim: true, bx, by, cv, p0, p1 }); }
     this.comp = document.createElement('canvas'); this.comp.width = R_COMP[2]; this.comp.height = R_COMP[3];
     this.tex = gl.createTexture();
     gl.activeTexture(gl.TEXTURE15);
@@ -253,7 +288,7 @@ export class PanelArt {
   // I: valores dos instrumentos; redesenha so o que mudou
   update(I) {
     const gl = this.gl;
-    const key = [I.kt, I.ft, I.hdg, I.pitch, I.roll, I.fpm / 10, I.rpm / 10, I.trim * 100].map((v) => v.toFixed(1)).join(',');
+    const key = [I.kt, I.ft, I.hdg, I.pitch, I.roll, I.fpm / 10, I.rpm / 10, I.turn * 4, I.slip * 200].map((v) => v.toFixed(1)).join(',');
     if (key === this.last) return;
     this.last = key;
     gl.activeTexture(gl.TEXTURE15);
@@ -263,12 +298,7 @@ export class PanelArt {
       const c = d.cv.getContext('2d');
       c.clearRect(0, 0, d.cv.width, d.cv.height);
       c.drawImage(this.atlas, d.bx, d.by, d.cv.width, d.cv.height, 0, 0, d.cv.width, d.cv.height);
-      if (d.g) d.g.hands(c, d.x, d.y, d.R, I);
-      else {
-        const x0 = d.p0[0] - d.bx, y0 = d.p0[1] - d.by, x1 = d.p1[0] - d.bx, y1 = d.p1[1] - d.by, w = x1 - x0;
-        const ty = y0 + (y1 - y0) * (0.5 - I.trim / 0.8);
-        c.fillStyle = C.amber; c.fillRect(x0 + w * 0.15, ty - w * 0.22, w * 0.7, w * 0.44);
-      }
+      if (d.g.hands) d.g.hands(c, d.x, d.y, d.R, I);
       gl.texSubImage2D(gl.TEXTURE_2D, 0, d.bx, d.by, gl.RGBA, gl.UNSIGNED_BYTE, d.cv);
     }
     drawCompass(this.comp.getContext('2d'), I.hdg);

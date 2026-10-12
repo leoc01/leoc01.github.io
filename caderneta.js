@@ -1,46 +1,12 @@
-// caderneta.js - a "caderneta do piloto" no navegador: carta visual (gerada do proprio mundo),
-// checklist que se marca sozinho conforme o piloto faz as coisas, e o manual resumido.
-// Abre com M (carta), H (checklist), U (manual) ou D-pad para cima (passa pelas tres).
-// O estado (qual pagina) vem do C (info[95]); aqui so desenha e confere os itens.
+// caderneta.js - as folhas da prancheta presa na perna do piloto (desenhadas em canvas e usadas
+// como textura do papel na cabine 3D): checklist (so leitura, papel mesmo), carta visual gerada do
+// proprio mundo (sem o aviaozinho: navegacao visual, VFR) e a folha dos controles.
+// Olhando bem para baixo, para a perna, a visao vai para a prancheta; RB/LB (Q/E) trocam a folha.
 
 const M_FOREST = 1, M_WATER = 6, M_TOWN = 7;
 const TER_N = 2048, CELL = 8, WORLD = TER_N * CELL;
 const S = 2, PX = TER_N / S;   // carta de 1024 px: 1 px = 16 m
 
-const CSS = `
-#cad { position: fixed; inset: 0; pointer-events: none; font-family: "DejaVu Sans Condensed", "Roboto Condensed", "Arial Narrow", Arial, sans-serif; }
-#cad .card { pointer-events: auto; background: #efe6d1; color: #2b211d; border-radius: 14px; box-shadow: 0 2px 0 #c9a24a inset, 0 18px 50px #000a; overflow: hidden; }
-#cad .band { background: linear-gradient(#8a2420, #6e1a17); color: #f6efe0; padding: 9px 16px 7px; display: flex; justify-content: space-between; align-items: baseline; position: relative; }
-#cad .band::after { content: ""; position: absolute; left: 0; right: 0; bottom: -4px; height: 3px; background: #c9a24a; }
-#cad .band b { font: italic 700 19px/1 "DejaVu Serif", Georgia, serif; }
-#cad .band span { font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; opacity: 0.8; }
-#cad .chart { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(94vw, 88vh); }
-#cad .chart .wrap { position: relative; }
-#cad .chart canvas { display: block; width: 100%; height: auto; }
-#cad .chart .foot { display: flex; justify-content: space-between; align-items: center; padding: 7px 14px; font-size: 12px; color: #6b5c4c; }
-#cad button { font: 700 12px/1 inherit; background: #8a2420; color: #f6efe0; border: 0; border-radius: 8px; padding: 6px 12px; cursor: pointer; }
-#cad .list { position: absolute; right: 14px; top: 14px; width: min(330px, 46vw); max-height: calc(100vh - 28px); overflow-y: auto; opacity: 0.96; }
-#cad .ph { padding: 6px 14px 2px; font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; color: #8a7a68; }
-#cad .ph.cur { color: #8a2420; font-weight: 700; }
-#cad .it { display: flex; gap: 8px; align-items: baseline; padding: 3px 14px; font-size: 14px; cursor: pointer; }
-#cad .it i { flex: 1; font-style: normal; }
-#cad .it em { font-style: normal; color: #6e1a17; font-weight: 700; font-size: 13px; }
-#cad .it .bx { width: 13px; height: 13px; border: 1.5px solid #8a7a68; border-radius: 3px; flex: none; position: relative; top: 2px; }
-#cad .it.ok .bx { background: #3f7d3a; border-color: #3f7d3a; }
-#cad .it.ok .bx::after { content: "✓"; color: #fff; font-size: 11px; position: absolute; left: 1px; top: -2px; }
-#cad .it.ok i, #cad .it.ok em { color: #8a7a68; }
-#cad .grp:not(.cur) .it { display: none; }
-#cad .grp.cur { background: #e7dcc2; padding-bottom: 6px; }
-#cad .list .hint { padding: 6px 14px 10px; font-size: 11px; color: #8a7a68; }
-#cad .man { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(760px, 94vw); max-height: 90vh; display: flex; flex-direction: column; }
-#cad .man .body { overflow-y: auto; padding: 8px 20px 16px; columns: 2 300px; column-gap: 26px; font-size: 13.5px; line-height: 1.38; }
-#cad .man h4 { margin: 10px 0 4px; font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; color: #8a2420; break-after: avoid; }
-#cad .man table { border-collapse: collapse; width: 100%; break-inside: avoid; }
-#cad .man td { padding: 2px 0; border-bottom: 1px dotted #cdbd9c; }
-#cad .man td:last-child { text-align: right; font-weight: 700; white-space: nowrap; }
-#cad .man ol { margin: 0; padding-left: 18px; break-inside: avoid; }
-#cad .man p { margin: 0 0 6px; }
-`;
 
 // ---------- carta ----------
 const HYPS = [[0, '#cfe2b2'], [500, '#e1e6b7'], [1000, '#eee2b0'], [2000, '#e9cf9b'], [3000, '#dcb886'], [4500, '#c99f78'], [6000, '#f2f0ea']];
@@ -210,209 +176,100 @@ function buildChart(w) {
   return { canvas: cv, airports, toChart };
 }
 
-// ---------- checklist ----------
-// cada item: texto, valor esperado e como o jogo confere (I = info do quadro, s = estado da conferencia)
-const PHASES = [
-  { id: 'antes', name: 'Antes da decolagem', items: [
-    ['Freios', 'aplicados', (I) => I[97] > 0.5 && I[86] > 0.5],
-    ['Comandos', 'livres e corretos', (I, s) => s.ctl === 63],
-    ['Cheque do motor', '1800 RPM', (I) => I[86] > 0.5 && I[67] < 25 && I[73] > 1700 && I[73] < 1950],
-    ['Flaps', '0° a 10°', (I) => I[81] <= 1],
-    ['Compensador', 'decolagem', (I) => Math.abs(I[75] - 0.05) < 0.07],
-    ['Farol e navegação', 'ligados', (I) => I[88] >= 1],
-  ] },
-  { id: 'decol', name: 'Decolagem', items: [
-    ['Luz de pouso', 'ligada', (I) => I[88] >= 3],
-    ['Motor', 'cheio', (I) => I[80] > 0.95],
-    ['Velocímetro', 'subindo', (I) => I[67] > 35],
-    ['Rodar', '55 kt', (I, s) => s.liftoff],
-  ] },
-  { id: 'sub', name: 'Subida', items: [
-    ['Velocidade', '75–80 kt', (I, s) => s.climbSpd > 4],
-    ['Flaps', 'recolhidos', (I) => I[81] === 0 && I[86] < 0.5 && I[96] > 60],
-  ] },
-  { id: 'cruz', name: 'Cruzeiro', items: [
-    ['Potência', '2200–2450 RPM', (I) => I[86] < 0.5 && I[73] >= 2200 && I[73] <= 2450],
-    ['Compensador', 'manche aliviado', (I, s) => s.trimmed > 4],
-  ] },
-  { id: 'pouso', name: 'Antes do pouso', items: [
-    ['Luz de pouso', 'ligada', (I) => I[88] >= 3],
-    ['Flaps', '20° a 30°', (I) => I[81] >= 2],
-    ['Aproximação', '60–70 kt', (I) => I[81] >= 2 && I[67] > 58 && I[67] < 72 && I[86] < 0.5],
-  ] },
-  { id: 'apos', name: 'Após o pouso', items: [
-    ['Flaps', 'recolhidos', (I) => I[81] === 0 && I[86] > 0.5],
-    ['Luz de pouso', 'desligada', (I) => I[88] < 3 && I[86] > 0.5],
-    ['Táxi', 'abaixo de 15 kt', (I) => I[86] > 0.5 && I[67] < 15],
-  ] },
-];
 
-const MANUAL = `
-<h4>Velocidades (KIAS)</h4>
-<table>
-<tr><td>Estol, flaps 30° (V<sub>S0</sub>)</td><td>40 kt</td></tr>
-<tr><td>Estol, sem flaps (V<sub>S1</sub>)</td><td>48 kt</td></tr>
-<tr><td>Rotação (V<sub>R</sub>)</td><td>55 kt</td></tr>
-<tr><td>Melhor ângulo (V<sub>X</sub>)</td><td>62 kt</td></tr>
-<tr><td>Melhor razão de subida (V<sub>Y</sub>)</td><td>74 kt</td></tr>
-<tr><td>Melhor planeio</td><td>68 kt</td></tr>
-<tr><td>Aproximação, flaps 30°</td><td>60–70 kt</td></tr>
-<tr><td>Manobra (V<sub>A</sub>)</td><td>99 kt</td></tr>
-<tr><td>Flaps estendidos (V<sub>FE</sub>)</td><td>85 kt</td></tr>
-<tr><td>Normal máxima (V<sub>NO</sub>), fim do arco verde</td><td>129 kt</td></tr>
-<tr><td>Nunca exceder (V<sub>NE</sub>), risco vermelho</td><td>163 kt</td></tr>
-</table>
-<h4>Motor e desempenho</h4>
-<table>
-<tr><td>Cheque de motor no solo</td><td>1800 RPM</td></tr>
-<tr><td>Cruzeiro (~95 kt)</td><td>2200–2400 RPM</td></tr>
-<tr><td>Planeio, motor em marcha lenta</td><td>~9 : 1</td></tr>
-<tr><td>Sem flaps, 65 kt, motor reduzido</td><td>~750 pés/min</td></tr>
-</table>
-<h4>Decolagem normal</h4>
-<ol><li>Flaps 0°–10°, compensador em decolagem.</li><li>Alinhe no eixo, motor cheio, mantenha a reta com o pedal.</li>
-<li>A 55 kt puxe suave até ~8° de nariz acima.</li><li>Suba a 75–80 kt; acima de 200 pés recolha os flaps.</li></ol>
-<h4>Pouso normal</h4>
-<ol><li>Na perna do vento: luz de pouso, flaps 10°.</li><li>Base: flaps 20°, 70 kt. Final: flaps 30°, 60–65 kt.</li>
-<li>PAPI: 2 brancas e 2 vermelhas = na rampa.</li><li>Sobre a cabeceira: reduza tudo e arredonde; toque com as rodas principais.</li>
-<li>Freios só com o nariz no chão.</li></ol>
-<h4>Glissada frontal (chegou alto)</h4>
-<p>Asa do lado do vento para baixo com o aileron, pedal todo para o outro lado e nariz um pouco abaixo para não ganhar velocidade.
-O avião segue reto com o nariz torto e desce quase o dobro. Para sair, alivie o pedal e nivele as asas antes do arredondamento.
-Evite com flaps acima de 20°: o profundor vibra.</p>
-<h4>Pane de motor em voo</h4>
-<ol><li>Velocidade de planeio: 68 kt (compense).</li><li>Escolha um campo à frente, de preferência contra o vento.</li>
-<li>Flaps só quando o pouso no campo estiver garantido.</li><li>Toque na menor velocidade possível, nariz acima.</li></ol>
-<h4>Estol</h4>
-<p>A buzina toca uns 5 kt antes. Recuperação: manche à frente até a buzina parar, motor cheio, asas niveladas com o pedal, e suba de novo devagar.</p>
-<h4>Limites</h4>
-<table><tr><td>Fator de carga, flaps recolhidos</td><td>+3,8 / −1,52 g</td></tr><tr><td>Fator de carga, flaps baixados</td><td>+3,0 g</td></tr>
-<tr><td>Vento cruzado demonstrado</td><td>15 kt</td></tr></table>
-<h4>Caderneta</h4>
-<p><b>M</b> carta · <b>H</b> checklist · <b>U</b> manual · no controle, ↑ passa pelas três.</p>
-`;
-
-export class Caderneta {
-  constructor(w) {
-    this.w = w;
-    const st = document.createElement('style');
-    st.textContent = CSS;
-    document.head.appendChild(st);
-    this.el = document.createElement('div');
-    this.el.id = 'cad';
-    document.body.appendChild(this.el);
-    this.page = 0;
-    this.chart = null;
-    this.reset();
-  }
-
-  reset() {
-    this.done = PHASES.map((p) => p.items.map(() => false));
-    this.s = { ctl: 0, liftoff: false, climbSpd: 0, trimmed: 0, flown: false, landed: false };
-    this.phase = 0;
-  }
-
-  // em que fase do voo estamos (a lista mostra esta aberta)
-  phaseOf(I) {
-    const ground = I[86] > 0.5, kt = I[67], s = this.s;
-    if (ground) {
-      if (s.flown) { s.landed = true; return 5; }
-      return kt > 25 || I[80] > 0.9 ? 1 : 0;
-    }
-    s.flown = true;
-    if (I[81] >= 1 && I[72] < -150 && I[96] < 500) return 4;     // flaps e descendo baixo: aproximação
-    if (I[72] > 300 && I[96] < 900) return 2;                     // subindo
-    return this.phase === 4 ? 4 : 3;
-  }
-
-  check(I, dt) {
-    const s = this.s, pos = [I[25], I[26], I[27]];
-    if (this.prev && Math.hypot(pos[0] - this.prev[0], pos[1] - this.prev[1], pos[2] - this.prev[2]) > 50) this.reset();   // cenario novo
-    this.prev = pos;
-    if (I[86] > 0.5) {   // comandos livres: cada lado de cada comando (6 bits)
-      const bits = [I[78] > 0.7, I[78] < -0.7, I[79] > 0.7, I[79] < -0.7, I[82] > 0.7, I[82] < -0.7];
-      bits.forEach((b, k) => { if (b) s.ctl |= 1 << k; });
-    }
-    if (I[86] < 0.5 && !s.liftoff && I[67] > 48) s.liftoff = true;
-    s.climbSpd = I[86] < 0.5 && I[72] > 200 && I[67] > 72 && I[67] < 83 ? s.climbSpd + dt : 0;
-    s.trimmed = I[86] < 0.5 && Math.abs(I[78]) < 0.05 && Math.abs(I[72]) < 300 ? s.trimmed + dt : 0;
-    this.phase = this.phaseOf(I);
-    PHASES.forEach((p, i) => p.items.forEach((it, k) => { if (!this.done[i][k] && it[2](I, s)) this.done[i][k] = true; }));
-  }
-
-  update(I, started, dt) {
-    if (started) this.check(I, dt);
-    const page = started ? I[95] | 0 : 0;
-    if (page !== this.page) { this.page = page; this.render(); }
-    else if (page === 2) this.renderList(false);
-    if (page === 1) this.drawPlane(I);
-  }
-
-  render() {
-    const p = this.page;
-    this.el.innerHTML = '';
-    this.listKey = '';
-    if (p === 1) {
-      if (!this.chart) this.chart = buildChart(this.w);
-      const card = document.createElement('div');
-      card.className = 'card chart';
-      card.innerHTML = `<div class="band"><b>Carta visual</b><span>M fecha</span></div><div class="wrap"></div>
-        <div class="foot"><span>Seu avião em vermelho. Altitude máxima por quadrante em azul (milhares e centenas de pés).</span><button>Imprimir</button></div>`;
-      this.live = document.createElement('canvas');
-      this.live.width = this.live.height = PX;
-      const wrap = card.querySelector('.wrap');
-      wrap.appendChild(this.live);
-      card.querySelector('button').onclick = () => this.print();
-      this.el.appendChild(card);
-    } else if (p === 2) {
-      const card = document.createElement('div');
-      card.className = 'card list';
-      this.el.appendChild(card);
-      this.listCard = card;
-      this.renderList(true);
-    } else if (p === 3) {
-      const card = document.createElement('div');
-      card.className = 'card man';
-      card.innerHTML = `<div class="band"><b>Manual resumido · Cessna 172</b><span>U fecha</span></div><div class="body">${MANUAL}</div>`;
-      this.el.appendChild(card);
-    }
-  }
-
-  renderList(force) {
-    const key = this.phase + '|' + this.done.map((a) => a.map(Number).join('')).join(',');
-    if (!force && key === this.listKey) return;
-    this.listKey = key;
-    let h = '<div class="band"><b>Checklist</b><span>H fecha</span></div>';
-    PHASES.forEach((ph, i) => {
-      h += `<div class="grp ${i === this.phase ? 'cur' : ''}"><div class="ph ${i === this.phase ? 'cur' : ''}">${ph.name}</div>`;
-      ph.items.forEach((it, k) => { h += `<div class="it ${this.done[i][k] ? 'ok' : ''}" data-p="${i}" data-k="${k}"><span class="bx"></span><i>${it[0]}</i><em>${it[1]}</em></div>`; });
-      h += '</div>';
-    });
-    h += '<div class="hint">Os itens se marcam sozinhos quando você faz a ação; clique para marcar à mão.</div>';
-    this.listCard.innerHTML = h;
-    this.listCard.querySelectorAll('.it').forEach((e) => { e.onclick = () => { this.done[+e.dataset.p][+e.dataset.k] = true; this.renderList(true); }; });
-    this.listCard.querySelectorAll('.ph').forEach((e, i) => { e.style.cursor = 'pointer'; e.onclick = () => { this.phase = i; this.renderList(true); }; });
-  }
-
-  drawPlane(I) {
-    const c = this.live.getContext('2d');
-    c.drawImage(this.chart.canvas, 0, 0);
-    const [x, y] = this.chart.toChart(I[25], I[26]);
-    const hdg = Math.atan2(I[28], I[29]);   // 0 = norte, horario
-    c.save(); c.translate(x, y); c.rotate(hdg);
-    c.fillStyle = '#d42a1e'; c.strokeStyle = '#fff'; c.lineWidth = 2;
-    c.beginPath();
-    c.moveTo(0, -13); c.lineTo(2.5, -4); c.lineTo(12, 0); c.lineTo(12, 3); c.lineTo(2.5, 2); c.lineTo(1.8, 9); c.lineTo(5, 11.5); c.lineTo(5, 13.5);
-    c.lineTo(-5, 13.5); c.lineTo(-5, 11.5); c.lineTo(-1.8, 9); c.lineTo(-2.5, 2); c.lineTo(-12, 3); c.lineTo(-12, 0); c.lineTo(-2.5, -4); c.closePath();
-    c.stroke(); c.fill();
-    c.restore();
-  }
-
-  print() {
-    const url = this.chart.canvas.toDataURL('image/png');
-    const win = window.open('', '_blank');
-    if (!win) return;
-    win.document.write(`<title>Carta visual - VOO</title><style>@page{size:auto;margin:8mm}body{margin:0}img{width:100%;}</style><img src="${url}" onload="setTimeout(()=>print(),200)">`);
-    win.document.close();
-  }
+// ---------- papel ----------
+export const PAPER_W = 1024, PAPER_H = 1400;
+const INK = '#23201c', RED = '#8a2420', FADE = '#6b5c4c';
+function paper(title, sub) {
+  const cv = document.createElement('canvas');
+  cv.width = PAPER_W; cv.height = PAPER_H;
+  const c = cv.getContext('2d');
+  c.fillStyle = '#f4efe2'; c.fillRect(0, 0, PAPER_W, PAPER_H);
+  // fibras e sombra leve nas bordas
+  for (let i = 0; i < 2500; i++) { c.fillStyle = `rgba(120,100,70,${Math.random() * 0.04})`; c.fillRect(Math.random() * PAPER_W, Math.random() * PAPER_H, 2, 2); }
+  const g = c.createRadialGradient(PAPER_W / 2, PAPER_H / 2, PAPER_H * 0.3, PAPER_W / 2, PAPER_H / 2, PAPER_H * 0.75);
+  g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(90,70,40,0.12)');
+  c.fillStyle = g; c.fillRect(0, 0, PAPER_W, PAPER_H);
+  c.fillStyle = RED; c.fillRect(0, 150, PAPER_W, 8);
+  c.fillStyle = INK; c.textBaseline = 'alphabetic';
+  c.font = 'italic 700 72px "DejaVu Serif", Georgia, serif'; c.fillText(title, 56, 110);
+  c.font = '600 28px "DejaVu Sans Condensed", Arial, sans-serif'; c.fillStyle = FADE;
+  c.textAlign = 'right'; c.fillText(sub, PAPER_W - 56, 108); c.textAlign = 'left';
+  return [cv, c];
 }
+// linha "item ........ VALOR"
+function leader(c, y, a, b, size = 34) {
+  c.font = `500 ${size}px "DejaVu Sans Condensed", Arial, sans-serif`; c.fillStyle = INK;
+  c.fillText(a, 70, y);
+  c.font = `700 ${size}px "DejaVu Sans Condensed", Arial, sans-serif`;
+  const wb = c.measureText(b).width, wa = c.measureText(a).width;
+  c.textAlign = 'right'; c.fillText(b, PAPER_W - 64, y); c.textAlign = 'left';
+  c.fillStyle = '#9a8b74';
+  for (let x = 70 + wa + 14; x < PAPER_W - 64 - wb - 14; x += 14) c.fillRect(x, y - 6, 4, 4);
+}
+function head(c, y, t) {
+  c.font = '700 30px "DejaVu Sans Condensed", Arial, sans-serif'; c.fillStyle = RED;
+  c.fillText(t.toUpperCase(), 56, y);
+  c.fillRect(56, y + 10, PAPER_W - 112, 2);
+}
+
+const CHECK = [
+  ['Antes da decolagem', [['Freios', 'APLICADOS'], ['Comandos', 'LIVRES E CORRETOS'], ['Cheque do motor', '1800 RPM'], ['Flaps', '0° – 10°'], ['Compensador', 'DECOLAGEM'], ['Luzes', 'NAV · STROBE']]],
+  ['Decolagem', [['Luz de pouso', 'LIGADA'], ['Motor', 'CHEIO'], ['Velocímetro', 'SUBINDO'], ['Rodar', '55 KT'], ['Subida', '75 – 80 KT']]],
+  ['Cruzeiro', [['Flaps', 'RECOLHIDOS'], ['Potência', '2200 – 2400 RPM'], ['Compensador', 'MANCHE ALIVIADO']]],
+  ['Antes do pouso', [['Luz de pouso', 'LIGADA'], ['Flaps', '20° – 30°'], ['Aproximação', '60 – 70 KT'], ['PAPI', '2 BRANCAS · 2 VERMELHAS']]],
+  ['Após o pouso', [['Flaps', 'RECOLHIDOS'], ['Luz de pouso', 'DESLIGADA'], ['Táxi', 'ABAIXO DE 15 KT'], ['Estacionado', 'FREIO PRESO']]],
+  ['Emergência: pane do motor', [['Planeio', '68 KT'], ['Campo', 'ESCOLHER À FRENTE'], ['Flaps', 'SÓ COM O POUSO GARANTIDO']]],
+];
+function sheetChecklist() {
+  const [cv, c] = paper('Checklist', 'CESSNA 172');
+  let y = 214;
+  for (const [t, items] of CHECK) {
+    head(c, y, t); y += 48;
+    for (const [a, b] of items) { leader(c, y, a, b, 28); y += 33; }
+    y += 12;
+  }
+  return cv;
+}
+
+function sheetChart(w) {
+  const [cv, c] = paper('Carta visual', 'VFR');
+  const ch = buildChart(w).canvas;
+  const sz = PAPER_W - 80;
+  c.drawImage(ch, 40, 190, sz, sz);
+  c.strokeStyle = INK; c.lineWidth = 2; c.strokeRect(40, 190, sz, sz);
+  let y = 190 + sz + 60;
+  head(c, y, 'Aeródromos'); y += 56;
+  const ap = new Float32Array(w.memory.buffer, w.voo_airports(), 16);
+  const str = (p) => { const b = new Uint8Array(w.memory.buffer, p, 16); let n = 0; while (n < 16 && b[n]) n++; return new TextDecoder().decode(b.subarray(0, n)); };
+  for (let i = 0; i < w.voo_nairports(); i++) {
+    const elev = ap[i * 8 + 6], len = ap[i * 8 + 4], num = ap[i * 8 + 7] | 0, n2 = (num + 18 - 1) % 36 + 1, f = (v) => String(v).padStart(2, '0');
+    leader(c, y, `${str(w.voo_ap_name(i))} (${str(w.voo_ap_code(i))})  TWR ${FREQ[i % 3]}`, `${Math.round(elev * 3.281)} ft · ${f(Math.min(num, n2))}/${f(Math.max(num, n2))} · ${Math.round(len)} m`, 28);
+    y += 44;
+  }
+  c.font = '500 24px "DejaVu Sans Condensed", Arial, sans-serif'; c.fillStyle = FADE;
+  c.fillText('Altitudes em pés. Azul: altitude máxima do quadrante. Linha com travessas: ferrovia.', 56, y + 14);
+  return cv;
+}
+
+const PAD = [['Analógico esquerdo', 'manche'], ['Analógico direito', 'olhar (para baixo: prancheta)'], ['RB · LB', 'motor (na prancheta: folha)'],
+  ['RT · LT', 'leme e bequilha'], ['A · B', 'flaps desce · sobe'], ['X · Y', 'compensador nariz acima · abaixo'],
+  ['Seta ←', 'navegação, farol rotativo e painel'], ['Seta →', 'strobes'], ['Seta ↑', 'pouso e táxi'],
+  ['Seta ↓', 'freio · dois toques: estacionamento'], ['SELECT', 'câmera'], ['START', 'menu'], ['L3', 'soltar / pegar os comandos'], ['R3 (segurar)', 'falar']];
+const KEYS = [['Setas', 'manche'], ['W · S', 'motor'], ['A · D', 'leme'], ['F · V', 'flaps'], [', · .', 'compensador acima · abaixo'],
+  ['I J K L', 'olhar (K: prancheta)'], ['Q · E', 'folha da prancheta'], ['1 · 2 · 3', 'navegação · strobes · pouso'],
+  ['Espaço', 'freio · dois toques: estacionamento'], ['C', 'câmera'], ['Esc', 'menu'], ['G', 'voar junto'], ['T', 'soltar / pegar os comandos'],
+  ['B (segurar)', 'falar'], ['Enter', 'chat']];
+function sheetControls() {
+  const [cv, c] = paper('Controles', 'CONTROLE · TECLADO');
+  let y = 214;
+  head(c, y, 'Controle'); y += 52;
+  for (const [a, b] of PAD) { leader(c, y, a, b, 27); y += 34; }
+  y += 20;
+  head(c, y, 'Teclado'); y += 52;
+  for (const [a, b] of KEYS) { leader(c, y, a, b, 27); y += 34; }
+  return cv;
+}
+
+// as tres folhas: 0 checklist, 1 carta, 2 controles
+export function buildSheets(w) { return [sheetChecklist(), sheetChart(w), sheetControls()]; }

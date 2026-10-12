@@ -4,8 +4,8 @@
 // centro esta escondido atras do relevo (G-buffer do mundo) ou atras da cabine (profundidade
 // da malha) e entao some inteiro - o halo nao e cortado pela metade.
 //
-// Selecao no jogo (SELECT no controle, N no teclado): 0 apagadas, 1 navegacao + farol,
-// 2 + strobes, 3 + farol de pouso e taxi.
+// Cada luz tem seu botao (bits em info[88]): 1 navegacao + farol rotativo (+ luz do painel),
+// 2 strobes, 4 pouso e taxi. Controle: setas esquerda/direita/cima; teclado 1/2/3.
 
 // as luzes (posicao, cor, nivel) vem do aviao em uso (aviao-*.js)
 import { LIGHTS as DEFS } from './aviao.js';
@@ -64,7 +64,7 @@ export class Lights {
     gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 36, 16);
     gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 1, gl.FLOAT, false, 36, 32);
     gl.bindVertexArray(null);
-    this.data = new Float32Array(DEFS.length * 9);
+    this.data = new Float32Array((DEFS.length + 8) * 9);
     this.empty = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, this.empty);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, 1, 1, 0, gl.RGBA, gl.HALF_FLOAT, null);
@@ -74,7 +74,7 @@ export class Lights {
 
   // posicao e direcao do farol de pouso no mundo (para o shader da cena iluminar o chao)
   static landing(I) {
-    if (I[88] < 3 || I[38] > 0.5) return null;
+    if (!((I[88] | 0) & 4) || I[38] > 0.5) return null;
     const f = [I[28], I[29], I[30]], u = [I[34], I[35], I[36]];
     const pos = [0, 1, 2].map((k) => I[25 + k] + f[k] * LAND.p[0] + u[k] * LAND.p[2]);
     const d = [0, 1, 2].map((k) => f[k] - u[k] * 0.07), l = Math.hypot(...d);
@@ -82,9 +82,10 @@ export class Lights {
   }
 
   // gTex/gW/gH: G-buffer do mundo; aTex/aW/aH: profundidade da cabine (ou null)
-  draw(I, time, W, H, gTex, gW, gH, aTex, aW, aH) {
+  // extra: luzes do mundo (farol do trem): { p: posicao no mundo, dir, r, c }
+  draw(I, time, W, H, gTex, gW, gH, aTex, aW, aH, extra) {
     const gl = this.gl, lv = I[88] | 0;
-    if (lv <= 0 || I[38] > 0.5) return;
+    const own = !(lv <= 0 || I[38] > 0.5);
     const PF = [I[28], I[29], I[30]], PR = [I[31], I[32], I[33]], PU = [I[34], I[35], I[36]];
     const CF = [I[3], I[4], I[5]], CR = [I[6], I[7], I[8]], CU = [I[9], I[10], I[11]];
     const cockpit = I[17] > 0;
@@ -95,7 +96,7 @@ export class Lights {
     const dark = Math.max(I[87], 1 - 0.75 * day);
     let n = 0;
     for (const L of DEFS) {
-      if (lv < L.lv) continue;
+      if (!own || !(lv & L.bit)) continue;
       let inten = 1;
       if (L.kind === 'beacon') { const ph = (time * 1.1) % 1; inten = ph < 0.13 ? 1 : ph < 0.25 ? 0.25 : 0.04; }
       if (L.kind === 'strobe') { const ph = time % 1.3; inten = (ph < 0.05 || (ph > 0.16 && ph < 0.21)) ? 1.6 : 0; }
@@ -114,6 +115,25 @@ export class Lights {
       this.data[o + 4] = L.c[0]; this.data[o + 5] = L.c[1]; this.data[o + 6] = L.c[2];
       this.data[o + 7] = inten * dark;
       this.data[o + 8] = L.tol || 0.25;
+      n++;
+    }
+    // farol do trem: visto de frente brilha forte; de lado, so um ponto
+    const WORLD = 16384, wr = (d) => d - Math.round(d / WORLD) * WORLD;
+    for (const L of extra || []) {
+      if (n >= this.data.length / 9) break;
+      const w = [wr(L.p[0] - I[0]), wr(L.p[1] - I[1]), L.p[2] - I[2]], dl = Math.hypot(...w) || 1;
+      if (dl > 6000) continue;
+      const c = -(L.dir[0] * w[0] + L.dir[1] * w[1] + L.dir[2] * w[2]) / dl;
+      const inten = (0.12 + 1.5 * Math.pow(Math.max(c, 0), 5)) * dark;
+      if (inten < 0.02) continue;
+      const o = n * 9;
+      this.data[o] = w[0] * CR[0] + w[1] * CR[1] + w[2] * CR[2];
+      this.data[o + 1] = w[0] * CU[0] + w[1] * CU[1] + w[2] * CU[2];
+      this.data[o + 2] = w[0] * CF[0] + w[1] * CF[1] + w[2] * CF[2];
+      this.data[o + 3] = L.r;
+      this.data[o + 4] = L.c[0]; this.data[o + 5] = L.c[1]; this.data[o + 6] = L.c[2];
+      this.data[o + 7] = inten;
+      this.data[o + 8] = 1.0;
       n++;
     }
     if (!n) return;

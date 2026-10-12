@@ -7,20 +7,23 @@ const KEY_LEFT = 258, KEY_RIGHT = 259, KEY_ESC = 261, KEY_ENTER = 262;
 
 // rotulos e valores com acento (o C fala ASCII)
 const LABELS = ['Continuar voo', 'Cenário', 'Reiniciar no aeroporto', 'Horário', 'Câmera externa', 'Pixel da imagem',
-  'Suavizar bordas', 'Quadros por segundo', 'Som', 'Sair do jogo'];
-const GROUPS = { 0: 'Voo', 3: 'Ambiente', 4: 'Imagem', 8: 'Som', 9: '' };
+  'Suavizar bordas', 'Saída de som', 'Volume do avião', 'Volume do ambiente', 'Volume do rádio', 'Sair do jogo'];
+const QUIT = 11;
+const GROUPS = { 0: 'Voo', 3: 'Ambiente', 4: 'Imagem', 7: 'Som', [QUIT]: '' };
 const VALUES = { manha: 'manhã', 'meio-dia': 'meio-dia', tarde: 'tarde', 'por do sol': 'pôr do sol', noite: 'noite',
   nao: 'não', sim: 'sim', baixa: 'baixa', normal: 'normal', alta: 'alta', 'sem limite': 'sem limite',
   desligado: 'desligado', 'alto-falantes': 'alto-falantes', 'fones 3D': 'fones 3D' };
-const pretty = (v) => VALUES[v] ?? v.replace(/^pixel (\d)x$/, '$1×');
+const pretty = (v) => VALUES[v] ?? v.replace(/^pixel (\d)x/, '$1×');
 
 const KEYS = [
   ['↑ ↓ ← →', 'manche'], ['W  S', 'motor'], ['A  D', 'leme'], ['F  V', 'flaps'], [',  .', 'trim (nariz acima / abaixo)'],
-  ['Espaço', 'freios'], ['I J K L', 'olhar em volta'], ['N', 'luzes do avião'], ['C', 'câmera'], ['M  H  U', 'carta, checklist, manual'], ['G', 'voar junto'], ['T', 'troca de comandos'], ['B', 'falar (segurar)'], ['Esc', 'menu'],
+  ['I J K L', 'olhar (K: prancheta)'], ['Q  E', 'folha da prancheta'], ['1  2  3', 'navegação · strobes · pouso'],
+  ['Espaço', 'freio (2×: estacionamento)'], ['C', 'câmera'], ['G', 'voar junto'], ['T', 'soltar / pegar os comandos'], ['B', 'falar (segurar)'], ['Esc', 'menu'],
 ];
 const PAD = [
-  ['L', 'manche'], ['RB  LB', 'motor'], ['RT  LT', 'leme'], ['A  B', 'flaps'], ['X  Y', 'trim (nariz acima / abaixo)'],
-  ['↓', 'freios'], ['R', 'olhar em volta'], ['←  →', 'luzes do avião'], ['SELECT', 'câmera'], ['↑', 'carta, checklist, manual'], ['L3', 'troca de comandos'], ['R3', 'falar (segurar)'], ['START', 'menu'],
+  ['L', 'manche'], ['R', 'olhar (para baixo: prancheta)'], ['RB  LB', 'motor (prancheta: folha)'], ['RT  LT', 'leme'], ['A  B', 'flaps'], ['X  Y', 'trim (nariz acima / abaixo)'],
+  ['←', 'navegação e painel'], ['→', 'strobes'], ['↑', 'pouso e táxi'], ['↓', 'freio (2×: estacionamento)'],
+  ['SELECT', 'câmera'], ['L3', 'soltar / pegar os comandos'], ['R3', 'falar (segurar)'], ['START', 'menu'],
 ];
 
 const CSS = `
@@ -29,15 +32,15 @@ const CSS = `
   font-family: "DejaVu Sans Condensed", "Roboto Condensed", "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
   user-select: none; flex-wrap: wrap; overflow: auto; }
 #menu .card { background: #efe6d1; color: #2b211d; border-radius: 18px; width: min(460px, 92vw); max-height: calc(100vh - 32px); overflow-y: auto;
-  box-shadow: 0 2px 0 #c9a24a inset, 0 24px 60px #000a, 0 0 0 1px #00000040; overflow: hidden; }
+  box-shadow: 0 2px 0 #c9a24a inset, 0 24px 60px #000a, 0 0 0 1px #00000040; overflow: hidden; display: flex; flex-direction: column; }
 #menu .band { background: linear-gradient(#8a2420, #6e1a17); color: #f6efe0; padding: 14px 26px 11px; position: relative; }
 #menu .band::after { content: ""; position: absolute; left: 0; right: 0; bottom: -5px; height: 3px; background: #c9a24a; }
 #menu .brand { font: italic 700 30px/1 "DejaVu Serif", Georgia, serif; letter-spacing: 0.02em; }
 #menu .brand small { font: 600 12px/1 inherit; font-style: normal; letter-spacing: 0.28em; opacity: 0.75; margin-left: 10px;
   font-family: "DejaVu Sans Condensed", "Arial Narrow", sans-serif; vertical-align: middle; }
-#menu .rows { padding: 10px 12px 12px; }
-#menu .grp { font-size: 11px; letter-spacing: 0.24em; text-transform: uppercase; color: #8a7a68; margin: 8px 14px 2px; }
-#menu .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 14px; border-radius: 10px;
+#menu .rows { padding: 8px 12px 10px; overflow-y: auto; min-height: 0; }
+#menu .grp { font-size: 11px; letter-spacing: 0.24em; text-transform: uppercase; color: #8a7a68; margin: 6px 14px 1px; }
+#menu .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 14px; border-radius: 10px;
   font-size: 16px; cursor: pointer; position: relative; transition: background 0.08s; }
 #menu .row.sel { background: #e2d5ba; }
 #menu .row.sel::before { content: ""; position: absolute; left: 0; top: 7px; bottom: 7px; width: 4px; border-radius: 2px; background: #8a2420; }
@@ -110,9 +113,9 @@ export class MenuUI {
     lines.slice(1).forEach((ln, i) => {
       const [, val, kind] = ln.split('\t');
       if (i in GROUPS && GROUPS[i]) rows += `<div class="grp">${GROUPS[i]}</div>`;
-      if (i === 9 && this.extra) rows += `<div class="grp">Junto</div><div class="row" data-i="x"><span>${this.extra.label}</span><span class="go">G</span></div>`;
-      if (i === 9) rows += '<div style="height:10px"></div>';
-      const cls = ['row', i === sel ? 'sel' : '', kind === 'a' ? 'act' : '', i === 9 ? 'quit' : ''].join(' ');
+      if (i === QUIT && this.extra) rows += `<div class="grp">Junto</div><div class="row" data-i="x"><span>${this.extra.label}</span><span class="go">G</span></div>`;
+      if (i === QUIT) rows += '<div style="height:10px"></div>';
+      const cls = ['row', i === sel ? 'sel' : '', kind === 'a' ? 'act' : '', i === QUIT ? 'quit' : ''].join(' ');
       let right = '';
       if (kind === 'v' || kind === 's') right = `<span class="val"><span class="arr" data-d="-">◀</span><b>${pretty(val)}</b><span class="arr" data-d="+">▶</span></span>`;
       else right = `<span class="go">${i === sel ? (pad ? 'A' : 'Enter') : ''}</span>`;

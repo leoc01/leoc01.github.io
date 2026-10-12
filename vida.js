@@ -4,6 +4,7 @@
 // usa a mesma luz, o mesmo contorno, o mesmo reflexo na agua e a mesma oclusao pelo relevo.
 import { Mesh, M_EXT, VF, IDENT, hex, add, mul, sub, len, norm, cross } from './malha.js';
 
+const M_WIN = 13;   // janela acesa a noite (cabin.js)
 const OBJ_F = 8, OBJ_LOCO = 0, OBJ_CAR = 1, OBJ_GULL = 2;
 const WORLD = 16384;
 const wrapd = (d) => d - Math.round(d / WORLD) * WORLD;
@@ -12,7 +13,7 @@ const C = {
   green: hex('#2f5d46'), glass: hex('#1d2a33'), roof: hex('#5d5f63'), wood: hex('#5a4434'), rail: hex('#8a8d93'),
   white: hex('#f4f2ec'), grey: hex('#a7adb4'), tip: hex('#202022'), beak: hex('#e5b62c'),
 };
-const box = (m, c, h, col) => m.rbox(c, IDENT, h, Math.min(0.06, Math.min(...h) * 0.4), { col, mat: M_EXT, step: 2.0 });
+const box = (m, c, h, col, mat = M_EXT) => m.rbox(c, IDENT, h, Math.min(0.06, Math.min(...h) * 0.4), { col, mat, step: 2.0 });
 
 // locomotiva diesel (17 m): cabine na frente, capo comprido, faixa dourada
 function buildLoco(m) {
@@ -22,8 +23,10 @@ function buildLoco(m) {
   box(m, [-1.2, 0, z0 + 0.55], [6.62, 1.17, 0.07], C.gold);            // faixa
   box(m, [6.0, 0, z0 + 1.55], [1.9, 1.45, 1.55], C.wine);              // cabine
   box(m, [6.0, 0, z0 + 3.15], [2.0, 1.5, 0.08], C.roof);               // teto
-  box(m, [7.92, 0, z0 + 2.2], [0.03, 1.05, 0.45], C.glass);            // para-brisa
-  for (const s of [-1, 1]) box(m, [6.2, s * 1.46, z0 + 2.2], [1.1, 0.02, 0.42], C.glass);
+  box(m, [7.92, 0, z0 + 2.2], [0.03, 1.05, 0.45], C.glass, M_WIN);     // para-brisa (cabine acesa a noite)
+  for (const s of [-1, 1]) box(m, [6.2, s * 1.46, z0 + 2.2], [1.1, 0.02, 0.42], C.glass, M_WIN);
+  m.cyl([8.0, 0, z0 + 1.0], [8.12, 0, z0 + 1.0], 0.2, { col: C.cream, mat: M_WIN }, 12);   // farol
+  for (const s of [-1, 1]) m.cyl([8.0, s * 0.85, z0 + 0.62], [8.1, s * 0.85, z0 + 0.62], 0.09, { col: C.cream, mat: M_WIN }, 8);
   box(m, [7.95, 0, z0 + 0.5], [0.15, 1.3, 0.35], C.gold);              // limpa-trilhos
   box(m, [-1.6, 0, z0 + 2.48], [0.5, 0.5, 0.12], C.dark);              // escapamento
   for (const x of [-5.5, 5.0]) bogie(m, x);
@@ -34,7 +37,7 @@ function buildCar(m) {
   box(m, [0, 0, z0 - 0.3], [7.4, 1.25, 0.22], C.dark);
   box(m, [0, 0, z0 + 1.3], [7.4, 1.4, 1.35], C.green);
   box(m, [0, 0, z0 + 1.65], [7.42, 1.42, 0.5], C.cream);
-  for (let k = -5; k <= 5; k++) for (const s of [-1, 1]) box(m, [k * 1.3, s * 1.43, z0 + 1.68], [0.42, 0.02, 0.32], C.glass);
+  for (let k = -5; k <= 5; k++) for (const s of [-1, 1]) box(m, [k * 1.3, s * 1.43, z0 + 1.68], [0.42, 0.02, 0.32], C.glass, M_WIN);
   box(m, [0, 0, z0 + 2.75], [7.3, 1.3, 0.12], C.roof);
   for (const x of [-4.9, 4.9]) bogie(m, x);
 }
@@ -82,48 +85,89 @@ export class VidaGfx {
   setFrame(objs, n, rail, I) {
     this.objs = objs; this.n = n;
     this.I = I;
-    if (rail && !this.rail) this.rail = Float32Array.from(rail);
-    // trilhos perto da camera: refaz quando a camera anda 150 m
-    if (this.rail && this.rail.length > 6) {
-      const cx = I[0], cy = I[1];
-      if (!this.trackAt || Math.hypot(wrapd(cx - this.trackAt[0]), wrapd(cy - this.trackAt[1])) > 150) this.buildTrack(cx, cy, I[2]);
-    }
+    if (rail && rail.length > 6 && !this.rail) { this.rail = Float32Array.from(rail); this.buildTrack(); }
   }
 
-  buildTrack(cx, cy, cz) {
-    const R = this.rail, n = R.length / 3, m = new Mesh();
-    const far = 900, near = 260;
-    let any = false;
+  // a linha inteira, uma vez so: os trilhos numa malha e os dormentes como copias de um so dormente
+  // (a placa repete o desenho; nada e refeito durante o voo)
+  buildTrack() {
+    const R = this.rail, n = R.length / 3, m = new Mesh(), gl = this.cab.gl;
+    const inst = [];
     for (let k = 0; k + 1 < n; k++) {
-      const dx = wrapd(R[k * 3] - cx), dy = wrapd(R[k * 3 + 1] - cy);
-      const d = Math.hypot(dx, dy);
-      if (d > far) continue;
-      any = true;
-      const ax = cx + dx, ay = cy + dy, az = R[k * 3 + 2];
-      const bx = ax + wrapd(R[k * 3 + 3] - R[k * 3]), by = ay + wrapd(R[k * 3 + 4] - R[k * 3 + 1]), bz = R[k * 3 + 5];
+      const ax = R[k * 3], ay = R[k * 3 + 1], az = R[k * 3 + 2], bx = R[k * 3 + 3], by = R[k * 3 + 4], bz = R[k * 3 + 5];
       const t = norm([bx - ax, by - ay, 0]), s = [t[1], -t[0], 0];
-      const P = (x, y, z, o, h) => [x + s[0] * o - cx, y + s[1] * o - cy, z + h];
+      const P = (x, y, z, o, h) => [x + s[0] * o, y + s[1] * o, z + h];
       for (const o of [-0.72, 0.72]) {   // trilhos: perfil simples (alma e boleto)
         const a0 = P(ax, ay, az, o - 0.04, 0.06), a1 = P(ax, ay, az, o + 0.04, 0.06), b0 = P(bx, by, bz, o - 0.04, 0.06), b1 = P(bx, by, bz, o + 0.04, 0.06);
         const up = [0, 0, 0.14];
-        const v = m.n;
+        const v0 = m.n;
         for (const p of [a0, a1, b1, b0]) m.vert(add(p, up), [0, 0, 1], C.rail, M_EXT);
-        m.quad(v, v + 1, v + 2, v + 3);
+        m.quad(v0, v0 + 1, v0 + 2, v0 + 3);
         for (const [p, q, nn] of [[a0, b0, mul(s, -1)], [a1, b1, s]]) {
           const w = m.n;
           for (const pp of [p, q, add(q, up), add(p, up)]) m.vert(pp, nn, C.steel, M_EXT);
           m.quad(w, w + 1, w + 2, w + 3);
         }
       }
-      if (d < near) for (let j = 0; j < 12; j++) {   // dormentes a cada ~0,67 m
-        const f = j / 12, x = ax + (bx - ax) * f, y = ay + (by - ay) * f, z = az + (bz - az) * f;
-        const c = [x - cx, y - cy, z - 0.04];
-        m.rbox(c, [t, s, [0, 0, 1]], [0.11, 1.25, 0.08], 0.02, { col: C.wood, mat: M_EXT, step: 3 });
+      const yaw = Math.atan2(t[1], t[0]);
+      for (let j = 0; j < 12; j++) {   // dormentes a cada ~0,67 m
+        const f = j / 12;
+        inst.push(ax + (bx - ax) * f, ay + (by - ay) * f, az + (bz - az) * f - 0.04, yaw);
       }
     }
-    this.trackAt = [cx, cy, cz];
-    if (this.track) { const gl = this.cab.gl; gl.deleteBuffer(this.track.vb); gl.deleteBuffer(this.track.ib); gl.deleteVertexArray(this.track.vao); this.track = null; }
-    if (any) this.track = this.cab.upload(m, this.cab.gl.STATIC_DRAW);
+    this.rails = this.cab.upload(m, gl.STATIC_DRAW);
+    const sm = new Mesh();
+    sm.rbox([0, 0, 0], IDENT, [0.11, 1.25, 0.08], 0.02, { col: C.wood, mat: M_EXT, step: 3 });
+    this.sleeper = this.cab.upload(sm, gl.STATIC_DRAW);
+    gl.bindVertexArray(this.sleeper.vao);
+    this.instBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.instBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(inst), gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(6);
+    gl.vertexAttribPointer(6, 4, gl.FLOAT, false, 16, 0);
+    gl.vertexAttribDivisor(6, 1);
+    gl.bindVertexArray(null);
+    this.perSeg = 12;
+  }
+
+  // desenha trilhos e (perto da camera) dormentes; o mundo da a volta: desloca a linha para perto
+  drawTrack(p) {
+    if (!this.rails) return false;
+    const gl = this.cab.gl, I = this.I, R = this.rail, n = R.length / 3;
+    const cx = I[0], cy = I[1];
+    let best = 1e18, bk = 0, lo = -1, hi = -1;
+    for (let k = 0; k < n; k += 2) {
+      const dx = wrapd(R[k * 3] - cx), dy = wrapd(R[k * 3 + 1] - cy), d = dx * dx + dy * dy;
+      if (d < best) { best = d; bk = k; }
+      if (d < 320 * 320) { if (lo < 0) lo = k; hi = k; }
+    }
+    if (best > 3000 * 3000) return false;
+    const sx = cx + wrapd(R[bk * 3] - cx) - R[bk * 3], sy = cy + wrapd(R[bk * 3 + 1] - cy) - R[bk * 3 + 1];   // multiplo do tamanho do mundo
+    gl.uniformMatrix4fv(p.u.uModel, false, this.model([sx, sy, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]));
+    this.cab.draw(this.rails);
+    if (lo >= 0) {
+      const first = Math.max(0, lo - 1) * this.perSeg, count = (Math.min(n - 1, hi + 2) - Math.max(0, lo - 1)) * this.perSeg;
+      gl.uniform1i(p.u.uInst, 1);
+      gl.bindVertexArray(this.sleeper.vao);
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.instBuf);
+      gl.vertexAttribPointer(6, 4, gl.FLOAT, false, 16, first * 16);
+      gl.drawElementsInstanced(gl.TRIANGLES, this.sleeper.count, gl.UNSIGNED_INT, 0, count);
+      gl.uniform1i(p.u.uInst, 0);
+    }
+    return true;
+  }
+
+  // farois do trem para o brilho (lights.js): posicao no mundo e direcao
+  glows() {
+    const out = [], O = this.objs;
+    for (let i = 0; i < this.n; i++) {
+      const o = i * OBJ_F;
+      if (O[o] !== OBJ_LOCO) continue;
+      const h = O[o + 4], f = [Math.cos(h), Math.sin(h), 0];
+      const z0 = 1.1;
+      out.push({ p: [O[o + 1] + f[0] * 8.15, O[o + 2] + f[1] * 8.15, O[o + 3] + z0 + 1.0], dir: f, r: 2.2, c: [1.0, 0.92, 0.75] });
+    }
+    return out;
   }
 
   // matriz: local (x frente, y direita, z cima) -> referencial do aviao
@@ -141,11 +185,7 @@ export class VidaGfx {
     const gl = this.cab.gl, loc = p.u.uModel, I = this.I;
     let drew = false;
     const camx = I[0], camy = I[1];
-    if (this.track) {
-      gl.uniformMatrix4fv(loc, false, this.model([this.trackAt[0], this.trackAt[1], 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]));
-      this.cab.draw(this.track);
-      drew = true;
-    }
+    if (this.drawTrack(p)) drew = true;
     const O = this.objs;
     for (let i = 0; i < this.n; i++) {
       const o = i * OBJ_F, kind = O[o];

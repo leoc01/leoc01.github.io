@@ -7,12 +7,12 @@
 // fica em servidor nenhum.
 //
 // Quem está com os comandos calcula a física e manda ~20 retratos por segundo do avião; o outro só
-// mostra (src/net.c interpola). Troca de comandos como no avião de verdade:
-//   T com os comandos ........ "Seus comandos" (o outro aperta T: "Meus comandos" e assume)
-//   T sem os comandos ........ aluno: pede os comandos; instrutor: assume na hora ("Meus comandos!")
-//   B (segurar) .............. fala no interfone (voz)      Enter ..... chat
-//   G ........................ abre este painel
-// No controle: L3 = T, R3 (segurar) = falar.
+// mostra (src/net.c interpola). Troca de comandos, sem confirmação:
+//   T / L3 com os comandos .... solta: o outro põe a mão no manche e assume
+//   T / L3 sem os comandos .... pega: a mão vai ao manche, assume, e o outro solta
+//   (a mão de quem assume vai ao manche; depois o outro solta manche e manete; por fim a outra mão
+//    de quem assumiu vai à manete — ver Cabin.prepare)
+//   B / R3 (segurar) .......... fala no interfone (voz)      Enter ..... chat      G ..... este painel
 
 const STUN = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }];
 const SEND_HZ = 20;
@@ -74,9 +74,10 @@ export class Rede {
     this.fala = document.createElement('div'); this.fala.id = 'fala'; document.body.appendChild(this.fala);
     this.chat = document.createElement('div'); this.chat.id = 'chat'; document.body.appendChild(this.chat);
     this.on = false; this.typing = false; this.talking = false;
-    this.cfg = { seat: 0, instr: 'host' };
-    this.lastSend = 0; this.pending = null;   // pedido de troca de comandos: 'give' (ofereceram) / 'ask' (pediram)
+    this.cfg = { seat: 0 };
+    this.lastSend = 0;
     this.padPrev = [false, false];
+    this.padA = true;   // o A que comecou o jogo precisa ser solto antes
     const m = location.hash.match(/#convite=([\w-]+)/);
     if (m) { this.invite = m[1]; history.replaceState(null, '', location.pathname + location.search); }
   }
@@ -99,9 +100,9 @@ export class Rede {
     const seg = (name, opts) => `<span class="seg" data-k="${name}">${opts.map(([v, t]) => `<button data-v="${v}" class="${c[name] === v ? 'on' : ''}">${t}</button>`).join('')}</span>`;
     const el = this.card('Voar junto', `
       <p>Duas pessoas no mesmo avião, cada uma no seu computador. Quem está com os comandos pilota; o outro vê tudo,
-      conversa pelo interfone e pode assumir. Nada passa por servidor: o convite vai pelo WhatsApp (ou onde quiser).</p>
+      conversa pelo interfone e pode pegar os comandos a qualquer hora. Nada passa por servidor: o convite vai
+      pelo WhatsApp (ou onde quiser). Você começa pilotando.</p>
       <div class="row"><label>Meu banco</label>${seg('seat', [[0, 'esquerdo'], [1, 'direito']])}</div>
-      <div class="row"><label>Instrutor</label>${seg('instr', [['host', 'eu'], ['guest', 'o convidado'], ['none', 'ninguém']])}</div>
       <div class="row"><button class="go" data-a="mk">Criar convite</button><span class="st"></span></div>
       <div data-step2 hidden>
         <p><b>1.</b> Mande este link para a outra pessoa:</p>
@@ -111,7 +112,7 @@ export class Rede {
         <textarea data-ans placeholder="código de resposta"></textarea>
         <div class="row"><button class="go" data-a="con">Conectar</button><span class="st" data-st2></span></div>
       </div>
-      <p class="hint">Em voo: <kbd>T</kbd> troca de comandos · <kbd>B</kbd> (segurar) fala · <kbd>Enter</kbd> chat · <kbd>G</kbd> este painel</p>`);
+      <p class="hint">Em voo: <kbd>T</kbd>/L3 solta ou pega os comandos · <kbd>B</kbd>/R3 (segurar) fala · <kbd>Enter</kbd> chat · <kbd>G</kbd> este painel</p>`);
     el.querySelectorAll('.seg').forEach((s) => s.querySelectorAll('button').forEach((b) => {
       b.onclick = () => { const k = s.dataset.k; c[k] = k === 'seat' ? +b.dataset.v : b.dataset.v; this.renderHost(); };
     }));
@@ -134,25 +135,35 @@ export class Rede {
   renderGuest() {
     const el = this.card('Convite de voo', `
       <p>Alguém te convidou para voar junto no mesmo avião.</p>
-      <div class="row"><button class="go" data-a="ok">Aceitar</button><span class="st"></span></div>
+      <div class="row"><button class="go" data-a="ok">Aceitar (A / Espaço)</button><span class="st"></span></div>
       <div data-step2 hidden>
         <p>Mande este código de resposta para quem te convidou (ele cola no jogo dele):</p>
         <textarea readonly data-ans></textarea>
-        <div class="row"><button class="go sec" data-a="copy">Copiar código</button><span class="st" data-st2>esperando a ligação...</span></div>
+        <div class="row"><button class="go sec" data-a="copy">Copiar código (A / Espaço)</button><span class="st" data-st2>esperando a ligação...</span></div>
       </div>`);
-    el.querySelector('[data-a=ok]').onclick = async () => {
+    const ok = async () => {
+      if (this.guestStep) return;
+      this.guestStep = 1;
       const st = el.querySelector('.st'); st.textContent = 'preparando...';
       try {
         el.querySelector('[data-ans]').value = await this.acceptInvite(this.invite);
         el.querySelector('[data-step2]').hidden = false; st.textContent = '';
-      } catch (e) { st.textContent = 'convite inválido: ' + e.message; }
+        this.guestStep = 2;
+        copy();
+      } catch (e) { st.textContent = 'convite inválido: ' + e.message; this.guestStep = 0; }
     };
-    el.querySelector('[data-a=copy]').onclick = () => { const t = el.querySelector('[data-ans]'); t.select(); navigator.clipboard?.writeText(t.value); };
+    const copy = () => {
+      const t = el.querySelector('[data-ans]'); t.select();
+      navigator.clipboard?.writeText(t.value).then(() => { el.querySelector('[data-st2]').textContent = 'código copiado — cole no WhatsApp e mande'; }).catch(() => {});
+    };
+    el.querySelector('[data-a=ok]').onclick = ok;
+    el.querySelector('[data-a=copy]').onclick = copy;
+    this.guestOk = () => (this.guestStep === 2 ? copy() : ok());   // A / Espaco
   }
   renderConnected() {
     const el = this.card('Voando junto', `
-      <p>Conectado. Você está no banco ${this.mySeat === 0 ? 'esquerdo' : 'direito'} como <b>${this.role(this.mySeat).toLowerCase()}</b>.</p>
-      <p class="hint"><kbd>T</kbd> troca de comandos · <kbd>B</kbd> (segurar) fala · <kbd>Enter</kbd> chat</p>
+      <p>Conectado. Você está no banco ${this.mySeat === 0 ? 'esquerdo' : 'direito'}.</p>
+      <p class="hint"><kbd>T</kbd>/L3 solta ou pega os comandos · <kbd>B</kbd>/R3 (segurar) fala · <kbd>Enter</kbd> chat</p>
       <div class="row"><button class="go sec" data-a="off">Desconectar</button></div>`);
     el.querySelector('[data-a=off]').onclick = () => { this.hangup('Você desconectou.'); this.close(); };
   }
@@ -198,7 +209,7 @@ export class Rede {
     this.wireData(dcState, dcCtl);
     await pc.setLocalDescription(await pc.createOffer());
     await this.gathered(pc);
-    const code = await packCode({ v: 1, sdp: pc.localDescription.sdp, seat: this.cfg.seat, instr: this.cfg.instr });
+    const code = await packCode({ v: 1, sdp: pc.localDescription.sdp, seat: this.cfg.seat });
     return `${location.origin}${location.pathname}#convite=${code}`;
   }
   async acceptAnswer(code) {
@@ -208,7 +219,7 @@ export class Rede {
   async acceptInvite(code) {
     const o = await unpackCode(code);
     this.host = false;
-    this.cfg = { seat: 1 - o.seat, instr: o.instr === 'host' ? 'other' : o.instr === 'guest' ? 'me' : 'none' };
+    this.cfg = { seat: 1 - o.seat };
     this.hostSeat = o.seat;
     const pc = this.newPC(false);
     let got = {};
@@ -223,15 +234,9 @@ export class Rede {
   connected() {
     if (this.on) return;
     this.on = true;
-    if (this.host) {
-      this.mySeat = this.cfg.seat;
-      this.instrSeat = this.cfg.instr === 'host' ? this.mySeat : this.cfg.instr === 'guest' ? 1 - this.mySeat : -1;
-      this.w.voo_net_start(1, this.mySeat, this.mySeat);   // quem convida começa pilotando
-    } else {
-      this.mySeat = this.cfg.seat;
-      this.instrSeat = this.cfg.instr === 'me' ? this.mySeat : this.cfg.instr === 'other' ? 1 - this.mySeat : -1;
-      this.w.voo_net_start(0, this.mySeat, this.hostSeat);
-    }
+    this.mySeat = this.cfg.seat;
+    if (this.host) this.w.voo_net_start(1, this.mySeat, this.mySeat);   // quem convida começa pilotando
+    else this.w.voo_net_start(0, this.mySeat, this.hostSeat);
     this.close();
     this.say(`Conectado. ${this.flying() ? 'Você está com os comandos.' : 'Os comandos estão com o outro.'}`, 4);
     this.addChat('', 'conectado: voando junto');
@@ -241,56 +246,38 @@ export class Rede {
     try { this.pc?.close(); } catch { /* */ }
     this.pc = null;
     if (this.on) { this.w.voo_net_stop(); this.say(why, 4); this.addChat('', why); }
-    this.on = false; this.pending = null;
+    this.on = false;
     if (this.mic) { this.mic.getTracks().forEach((t) => t.stop()); this.mic = null; }
   }
 
   // ---------- comandos ----------
-  role(seat) {
-    if (this.instrSeat === seat) return 'Instrutor';
-    if (this.instrSeat >= 0) return 'Aluno';
-    return seat === 0 ? 'Piloto' : 'Copiloto';
-  }
   flying() { const I = this.I; return I ? (I[101] | 0) === this.mySeat : true; }
   send(o) { if (this.dcCtl?.readyState === 'open') this.dcCtl.send(JSON.stringify(o)); }
   pressT() {
-    if (!this.on) return;
-    const me = this.role(this.mySeat);
-    if (this.flying()) {
-      this.send({ t: 'give' });
-      this.say(`Você: “Seus comandos.”`);
-    } else if (this.pending === 'give' || this.instrSeat === this.mySeat) {
-      this.take(this.pending === 'give' ? '“Meus comandos.”' : '“Meus comandos!”');
-    } else {
-      this.pending = 'ask';
-      this.send({ t: 'ask' });
-      this.say(`Você (${me.toLowerCase()}): “Posso pegar os comandos?”`);
-    }
+    if (!this.on || this.grabbing) return;
+    if (this.flying()) { this.send({ t: 'release' }); this.say('Você soltou os comandos', 2.5); }
+    else this.grab();
   }
-  take(txt) {
-    this.w.voo_net_take();
-    this.pending = null;
-    this.send({ t: 'took' });
-    this.say(`Você: ${txt}`);
+  // pega os comandos: a mão vai ao manche (~0,35 s) e então este computador passa a calcular o avião
+  grab() {
+    if (this.grabbing || this.flying()) return;
+    this.grabbing = true;
+    this.cabin?.grab(this.mySeat);
+    this.send({ t: 'grab' });
+    setTimeout(() => {
+      this.grabbing = false;
+      if (!this.on || this.flying()) return;
+      this.w.voo_net_take();
+      this.send({ t: 'took' });
+      this.say('Você está com os comandos', 2.5);
+    }, 350);
   }
   onCtl(m) {
-    const other = this.role(1 - this.mySeat);
-    if (m.t === 'give') {
-      if (this.pending === 'ask') { this.take('“Meus comandos.”'); return; }   // tinha pedido: assume
-      this.pending = 'give';
-      this.say(`${other}: “Seus comandos.” — aperte T para assumir`, 8);
-    } else if (m.t === 'ask') {
-      this.say(`${other}: “Posso pegar os comandos?” — aperte T para passar`, 8);
-    } else if (m.t === 'took') {
-      this.w.voo_net_give();
-      this.pending = null;
-      this.say(`${other}: “Meus comandos.” — mãos no colo`, 4);
-    } else if (m.t === 'chat') {
-      this.addChat(other, m.txt);
-    } else if (m.t === 'ptt') {
-      this.squelch();
-      this.otherTalking = m.on;
-    }
+    if (m.t === 'release') this.grab();                                   // soltou: assume sem perguntar
+    else if (m.t === 'grab') this.cabin?.grab(1 - this.mySeat);          // a mão do outro vai ao manche
+    else if (m.t === 'took') { if (this.flying()) this.w.voo_net_give(); this.say('O outro está com os comandos', 2.5); }
+    else if (m.t === 'chat') this.addChat('Outro', m.txt);
+    else if (m.t === 'ptt') { this.squelch(); this.otherTalking = m.on; }
   }
 
   // ---------- voz (interfone) ----------
@@ -317,9 +304,10 @@ export class Rede {
     const hp = new BiquadFilterNode(ctx, { type: 'highpass', frequency: 320, Q: 0.7 });
     const lp = new BiquadFilterNode(ctx, { type: 'lowpass', frequency: 3200, Q: 0.9 });
     const sh = new WaveShaperNode(ctx, { curve: Float32Array.from({ length: 256 }, (_, i) => Math.tanh((i / 127.5 - 1) * 2.2) / Math.tanh(2.2)) });
-    const g = new GainNode(ctx, { gain: 1.4 });
+    const g = new GainNode(ctx, { gain: 1.4 * (this.sound.radio ?? 0.64) });
     src.connect(hp); hp.connect(lp); lp.connect(sh); sh.connect(g); g.connect(ctx.destination);
     this.voice = g;
+    this.voiceTimer = setInterval(() => { g.gain.setTargetAtTime(1.4 * (this.sound.radio ?? 0.64), ctx.currentTime, 0.05); }, 250);   // volume do radio
   }
   squelch() {   // chiado curto do interfone ao apertar/soltar
     const ctx = this.sound.ctx;
@@ -327,8 +315,9 @@ export class Rede {
     const n = Math.floor(ctx.sampleRate * 0.06), b = ctx.createBuffer(1, n, ctx.sampleRate), d = b.getChannelData(0);
     for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * 0.12 * (1 - i / n);
     const s = new AudioBufferSourceNode(ctx, { buffer: b });
+    const vg = new GainNode(ctx, { gain: this.sound.radio ?? 0.64 });
     const f = new BiquadFilterNode(ctx, { type: 'bandpass', frequency: 2200, Q: 0.8 });
-    s.connect(f); f.connect(ctx.destination); s.start();
+    s.connect(f); f.connect(vg); vg.connect(ctx.destination); s.start();
   }
 
   // ---------- chat e falas na tela ----------
@@ -373,6 +362,7 @@ export class Rede {
     if (this.typing) return true;
     if (!this.panel.hidden) {   // painel aberto: as teclas sao dele (colar codigo etc.)
       if (down && e.key === 'Escape') this.close();
+      if (down && !e.repeat && e.key === ' ' && this.guestOk && e.target?.tagName !== 'TEXTAREA') { e.preventDefault(); this.guestOk(); }
       return true;
     }
     const k = e.key.toLowerCase();
@@ -390,6 +380,11 @@ export class Rede {
     if (this.invite && !this.on && !this.askedInvite) { this.askedInvite = true; this.open(); }
     const pads = navigator.getGamepads ? navigator.getGamepads() : [];
     const gp = [...pads].find((p) => p && p.connected);
+    if (gp && !this.panel.hidden && this.guestOk) {   // convite: A aceita / copia
+      const a = !!gp.buttons[0]?.pressed;
+      if (a && !this.padA) this.guestOk();
+      this.padA = a;
+    }
     if (gp && this.on) {
       const l3 = !!gp.buttons[10]?.pressed, r3 = !!gp.buttons[11]?.pressed;
       if (l3 && !this.padPrev[0]) this.pressT();
@@ -408,8 +403,8 @@ export class Rede {
     const fly = I[101] | 0;
     const seatName = (s) => (s === 0 ? 'esquerdo' : 'direito');
     this.badge.hidden = false;
-    this.badge.innerHTML = `✈ Juntos · você: banco ${seatName(this.mySeat)} (${this.role(this.mySeat).toLowerCase()})<br>`
-      + `Comandos: <b>${fly === this.mySeat ? 'você' : this.role(fly).toLowerCase()}</b>`
+    this.badge.innerHTML = `✈ Juntos · você: banco ${seatName(this.mySeat)}<br>`
+      + `Comandos: <b>${fly === this.mySeat ? 'você' : 'o outro (banco ' + seatName(fly) + ')'}</b>`
       + (this.talking ? ' · <span class="mic">● falando</span>' : this.otherTalking ? ' · <span class="mic">● o outro fala</span>' : '');
   }
 }

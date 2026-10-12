@@ -391,7 +391,7 @@ export class Renderer {
 
     // 4c) brilho das luzes do aviao
     gl.viewport(0, H - viewH, W, viewH);
-    this.lights.draw(I, I[14], W, viewH, this.tG, f.iw, f.ih, this.cabin.aTex, W, viewH);
+    this.lights.draw(I, I[14], W, viewH, this.tG, f.iw, f.ih, this.cabin.aTex, W, viewH, this.cabin.vida.glows());
 
     // 5) painel, HUD e menu
     this.drawCells(f.cells, f.cols, f.rows, cellW, cellH, W, H);

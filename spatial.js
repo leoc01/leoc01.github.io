@@ -13,6 +13,8 @@
 export const NSRC = 11;          // AS_COUNT no C
 export const WIND = 2;           // AS_WIND: sem posicao, estereo
 export const OUT_CHANNELS = [1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1];
+// grupos de volume: 0 aviao (motor, helice, vento, rodas, buzina, flaps, cliques, impacto), 1 ambiente (vacas, trem, gaivotas)
+export const GROUP = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1];
 
 // resposta ao impulso sintetica (estereo, descorrelacionada)
 function makeIR(ctx, kind) {
@@ -81,12 +83,14 @@ export function buildGraph(ctx, connect, dest = ctx.destination) {
   sendOut.connect(convOut); sendCab.connect(convCab);
   convOut.connect(master); convCab.connect(master);
 
+  // um ganho por grupo (volume do aviao e do ambiente, ajustaveis no menu)
+  const groups = [0, 1].map(() => { const g = ctx.createGain(); g.connect(master); g.connect(send); return g; });
   const panners = [];
   for (let s = 0; s < NSRC; s++) {
     if (s === WIND) {
       const g = ctx.createGain();
       connect(s, g);
-      g.connect(master);
+      g.connect(groups[GROUP[s]]);
       panners.push(null);
       continue;
     }
@@ -99,8 +103,7 @@ export function buildGraph(ctx, connect, dest = ctx.destination) {
     const bal = new StereoPannerNode(ctx, { pan: 0 });
     connect(s, p);
     p.connect(bal);
-    bal.connect(master);
-    bal.connect(send);
+    bal.connect(groups[GROUP[s]]);
     p.bal = bal;
     panners.push(p);
   }
@@ -110,7 +113,11 @@ export function buildGraph(ctx, connect, dest = ctx.destination) {
 
   let extra = 0.7;
   return {
-    master, panners, sendOut, sendCab,
+    master, panners, sendOut, sendCab, groups,
+    setVolumes(plane, amb, when) {   // 0..1 cada
+      groups[0].gain.setTargetAtTime(plane, when, 0.05);
+      groups[1].gain.setTargetAtTime(amb, when, 0.05);
+    },
     setMode(mode) {   // 1 alto-falantes, 2 fones 3D
       const m = mode === 2 ? 'HRTF' : 'equalpower';
       extra = mode === 2 ? 0.7 : 0.2;

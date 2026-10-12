@@ -472,6 +472,21 @@ function buildParts() {
   part('torso', 'body', (m) => m.capsule([0.33, -0.27, -0.10], [0.40, -0.27, 0.13], 0.145, { col: COL.shirt }, 14));
   const limb = (name, L, r, col) => part(name, 'body', (m) => m.capsule([0, 0, 0], [L, 0, 0], r, { col }, 10));
   for (const s of [-1, 1]) { limb('thigh' + s, L_THIGH, 0.075, COL.jeans); limb('shin' + s, L_SHIN, 0.056, COL.jeans); }
+  // ----- prancheta na coxa (de dentro): tabua, presilha e o papel (textura das folhas, material 14) -----
+  // centro na origem; x ao longo da coxa (o "cima" do papel aponta para o joelho), y para a direita
+  const BW = 0.115, BL = 0.155;   // meia largura e meio comprimento
+  const board = (m, flip) => {
+    m.rbox([0, 0, -0.006], IDENT, [BL, BW, 0.005], 0.004, { col: hex('#7a5638') });
+    m.rbox([BL - 0.012, 0, 0.004], IDENT, [0.016, 0.05, 0.006], 0.004, { col: COL.chrome, mat: M_CHROME });
+    m.rbox([0, BW + 0.004, -0.02], IDENT, [0.05, 0.004, 0.02], 0.003, { col: COL.black });   // elastico na perna
+    m.rbox([0, -BW - 0.004, -0.02], IDENT, [0.05, 0.004, 0.02], 0.003, { col: COL.black });
+    const x0 = -BL + 0.008, x1 = BL - 0.03, y0 = -BW + 0.008, y1 = BW - 0.008;
+    m.plane([x1, y0, 0.0005], [x1, y1, 0.0005], [x0, y0, 0.0005], 1, 1, {
+      col: [1, 1, 1], mat: 14, ref: () => [0, 0, -1],
+      uv: (p) => [flip ? 1 - (p[1] - y0) / (y1 - y0) : (p[1] - y0) / (y1 - y0), (x1 - p[0]) / (x1 - x0)] });
+  };
+  part('board', 'body', (m) => board(m, false));
+  part('boardM', 'boardM', (m) => board(m, true));   // a do banco da direita (desenhada espelhada)
   for (const k of ['L', 'R']) {
     limb('up' + k, L_UP, 0.046, COL.shirt);
     limb('fore' + k, L_FORE, 0.036, COL.skin);
@@ -513,10 +528,23 @@ function bodyMatrices(st, opt) {
     M['thigh' + s] = matAlong(HIP(s), knee);
     M['shin' + s] = matAlong(knee, ank);
   }
+  {   // prancheta em cima da coxa de dentro, seguindo a coxa
+    const pd = 0.045 * st.rud;
+    const hip = HIP(1), knee = add(KNEE(1), [pd * 0.4, 0, 0]);
+    const d = norm(sub(knee, hip)), c = add(lerp3(hip, knee, 0.72), [0, 0, 0.11]);
+    const y = norm(sub([0, 1, 0], mul(d, d[1]))), z = cross(d, y);
+    // inclinada para o rosto: a ponta do joelho sobe e a borda de dentro levanta um pouco
+    const rx = rad(-10), ry = rad(-12);
+    const d1 = norm(add(mul(d, Math.cos(ry)), mul(z, -Math.sin(ry)))), z1 = cross(d1, y);
+    const y2 = norm(add(mul(y, Math.cos(rx)), mul(z1, Math.sin(rx)))), z2 = cross(d1, y2);
+    M.board = matRT([d1, y2, z2], c);
+  }
   const yoke0 = matAxis([1, 0, 0], -st.ail * rad(38), [0, YOKE_Y[0], YOKE_Z], [-0.065 * st.elev, 0, 0]);
   const grip = xform(yoke0, GRIP_L);
-  const hL = opt.lap ? LAP(-1) : add(grip, [0, -0.012, 0]);
-  const hR = opt.lap ? LAP(1) : (opt.hand || handTarget('thr', st));
+  // pesos: 1 = mao no comando, 0 = mao no colo (a troca de comandos anima entre os dois)
+  const wY = opt.wY ?? (opt.lap ? 0 : 1), wT = opt.wT ?? (opt.lap ? 0 : 1);
+  const hL = lerp3(LAP(-1), add(grip, [0, -0.012, 0]), wY);
+  const hR = lerp3(LAP(1), opt.hand || handTarget('thr', st), wT);
   for (const [k, S0, H, hint] of [['L', SH_L, hL, [-0.3, -0.5, -1]], ['R', SH_R, hR, [-0.4, 0.4, -1]]]) {
     // longe demais: o tronco se inclina (o ombro avanca na direcao da mao)
     const dd = sub(H, S0), far = len(dd) - (L_UP + L_FORE - 0.03);
@@ -543,7 +571,7 @@ function mul4(A, B) {
 // alavanca continuam no lugar de verdade: o alvo da mao e espelhado antes)
 function rightPersonMatrices(st, opt) {
   const mir = (p) => [p[0], -p[1], p[2]];
-  const B = bodyMatrices({ ...st, ail: -st.ail, rud: -st.rud }, { lap: opt.lap, hand: opt.hand ? mir(opt.hand) : mir(handTarget('thr', st)) });
+  const B = bodyMatrices({ ...st, ail: -st.ail, rud: -st.rud }, { lap: opt.lap, wY: opt.wY, wT: opt.wT, hand: opt.hand ? mir(opt.hand) : mir(handTarget('thr', st)) });
   const M = {};
   for (const k in B) M[k] = mul4(MIRROR, B[k]);
   M.head = MIRROR;
@@ -563,7 +591,7 @@ function partMatrices(st) {
   M.trimp = matT([0, 0, (PLATE.z1 - PLATE.z0) * lerp(PED_SCALE.v0, PED_SCALE.v1, clamp((st.trim + 0.4) / 0.8, 0, 1))]);
   const pd = {};
   YOKE_Y.forEach((y0, i) => [-1, 1].forEach((s) => { pd[`${i}${s}`] = s * 0.045 * st.rud; M[`ped${i}${s}`] = matT([pd[`${i}${s}`], 0, 0]); }));
-  Object.assign(M, bodyMatrices(st, { lap: st.lap, hand: st.hand }));
+  Object.assign(M, bodyMatrices(st, { lap: st.lap, wY: st.wY, wT: st.wT, hand: st.hand }));
   const H = [WING.hinge, 0, wingProf.thick(WING.hinge)[1] + 0.01];
   for (const s of [-1, 1]) {
     M['flap' + s] = matAxis([0, 1, 0], -rad(32) * st.flap, H);
@@ -675,13 +703,13 @@ function shellInner(p) {
 
 // luzes no referencial do aviao (x frente, y direita, z cima): posicao, raio do brilho, cor, nivel minimo
 const LIGHTS = [
-  { p: [0.10, -5.69, 0.90], r: 0.9, c: [1.0, 0.12, 0.08], lv: 1, tol: 1.05 },                 // navegacao esquerda
-  { p: [0.10, 5.69, 0.90], r: 0.9, c: [0.15, 1.0, 0.30], lv: 1, tol: 1.05 },                  // direita
-  { p: [-5.56, 0, 0.50], r: 0.7, c: [1.0, 0.98, 0.92], lv: 1 },                    // cauda
-  { p: [-5.05, 0, 2.00], r: 1.2, c: [1.0, 0.10, 0.05], lv: 1, kind: 'beacon' },     // farol rotativo
-  { p: [0.00, -5.72, 0.90], tol: 1.2, r: 2.4, c: [1.0, 1.0, 1.0], lv: 2, kind: 'strobe' },    // strobes nas pontas
-  { p: [0.00, 5.72, 0.90], tol: 1.2, r: 2.4, c: [1.0, 1.0, 1.0], lv: 2, kind: 'strobe' },
-  { p: [3.02, 0, -0.24], r: 1.4, c: [1.0, 0.93, 0.78], lv: 3, kind: 'land' },        // farol de pouso no nariz
+  { p: [0.10, -5.69, 0.90], r: 0.9, c: [1.0, 0.12, 0.08], bit: 1, tol: 1.05 },                 // navegacao esquerda
+  { p: [0.10, 5.69, 0.90], r: 0.9, c: [0.15, 1.0, 0.30], bit: 1, tol: 1.05 },                  // direita
+  { p: [-5.56, 0, 0.50], r: 0.7, c: [1.0, 0.98, 0.92], bit: 1 },                    // cauda
+  { p: [-5.05, 0, 2.00], r: 1.2, c: [1.0, 0.10, 0.05], bit: 1, kind: 'beacon' },     // farol rotativo
+  { p: [0.00, -5.72, 0.90], tol: 1.2, r: 2.4, c: [1.0, 1.0, 1.0], bit: 2, kind: 'strobe' },    // strobes nas pontas
+  { p: [0.00, 5.72, 0.90], tol: 1.2, r: 2.4, c: [1.0, 1.0, 1.0], bit: 2, kind: 'strobe' },
+  { p: [3.02, 0, -0.24], r: 1.4, c: [1.0, 0.93, 0.78], bit: 4, kind: 'land' },        // farol de pouso no nariz
 ];
 
 export { MIRROR, rightPersonMatrices, LIGHTS, shellInner, SHELL_GLSL, PAINT_GLSL, buildStatic, buildExterior, buildOutside, buildHead, buildGlass, buildProp, buildParts, partMatrices, handTarget };

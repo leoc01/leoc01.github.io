@@ -2,7 +2,7 @@
 import { instantiate } from './wasm.js';
 import { Renderer } from './renderer.js';
 import { MenuUI } from './menu.js';
-import { Caderneta } from './caderneta.js';
+import { buildSheets } from './caderneta.js';
 import { Rede } from './rede.js';
 import { buildGraph, NSRC, OUT_CHANNELS } from './spatial.js';
 
@@ -115,7 +115,25 @@ class Sound {
       this.sent += n;
     }
     this.g.setCabin(cabin, this.ctx.currentTime);
+    // volumes do menu (0..10, curva quadratica: o meio soa como meio)
+    const vp = info[105] / 10, va = info[106] / 10;
+    if (Number.isFinite(vp) && Number.isFinite(va) && (vp !== this.vp || va !== this.va)) { this.vp = vp; this.va = va; this.g.setVolumes(vp * vp, va * va, this.ctx.currentTime); }
+    this.radio = (info[107] / 10) ** 2;
   }
+}
+
+// dica discreta nos primeiros segundos de voo
+function showHint(txt) {
+  let d = $('dica');
+  if (!d) {
+    d = document.createElement('div'); d.id = 'dica';
+    d.style.cssText = 'position:fixed;left:50%;top:14px;transform:translateX(-50%);color:#f6efe0;font:600 14px "DejaVu Sans Condensed",Arial,sans-serif;'
+      + 'background:#1c1413b0;border:1px solid #c9a24a55;border-radius:10px;padding:7px 14px;pointer-events:none;transition:opacity 1.2s;z-index:4';
+    document.body.appendChild(d);
+  }
+  d.textContent = txt; d.style.opacity = 1;
+  clearTimeout(showHint.t);
+  showHint.t = setTimeout(() => { d.style.opacity = 0; }, txt.length > 40 ? 8000 : 2500);
 }
 
 // ---------- principal ----------
@@ -135,17 +153,18 @@ async function main() {
   renderer.uploadWorld(w);
   let sunVersion = w.voo_sun_version();
   setProgress(1, '');
-  $('carregando').hidden = true;
-  $('comecar').hidden = false;
 
   const sound = new Sound(w);
   const rede = new Rede(w, sound);   // dois no mesmo aviao
+  rede.cabin = renderer.cabin;
   let started = false;
   const start = async () => {
     if (started) return;
     started = true;
     $('inicio').hidden = true;
     sound.start();
+    showHint(w.voo_pad_active() ? 'Olhe para a perna: prancheta com checklist, carta e controles · START: menu'
+                                : 'Olhe para baixo (K): prancheta com checklist, carta e controles · Esc: menu');
     if (!params.has('janela') && document.documentElement.requestFullscreen)
       document.documentElement.requestFullscreen().catch(() => {});
   };
@@ -154,7 +173,7 @@ async function main() {
   // teclado
   const down = new Set();
   window.addEventListener('keydown', (e) => {
-    if (!started) { if (!e.repeat) start(); e.preventDefault(); return; }
+    if (!started) { if (!e.repeat && e.key === ' ') start(); e.preventDefault(); return; }   // so Espaco comeca
     if (rede.key(e, true)) return;
     const k = keyCode(e);
     if (k < 0) return;
@@ -180,7 +199,7 @@ async function main() {
     for (const [std, jb] of Object.entries(PAD_MAP)) {
       const on = bt(+std).pressed;
       w.voo_btn(jb, on ? 1 : 0);
-      if (on && !prevBtn[std]) { if (!started) start(); else w.voo_btnpress(jb); }
+      if (on && !prevBtn[std]) { if (!started) { if (+std === 0) start(); } else w.voo_btnpress(jb); }   // so A comeca
       prevBtn[std] = on;
     }
     const name = 'controle: ' + gp.id.replace(/\s*\(.*$/, '').slice(0, 60);
@@ -193,22 +212,14 @@ async function main() {
   void padName;
 
   // ---------- laco ----------
-  let tPrev = performance.now() / 1000, last = 0, fpsN = 0, fpsT = tPrev;
+  let tPrev = performance.now() / 1000, fpsN = 0, fpsT = tPrev;
   const info = () => new Float32Array(w.memory.buffer, w.voo_info(), 128);
   let iw = 0, ih = 0, vrowsPrev = 30;
   const menuUI = new MenuUI(w, { label: 'Voar junto (2 no avião)', onClick: () => rede.open() });
-  const caderneta = new Caderneta(w);
+  renderer.cabin.setPaper(buildSheets(w));   // folhas da prancheta
   let railData = null;
-  const frame = (now) => {
-    requestAnimationFrame(frame);
-    const t = now / 1000;
-    const lim = info()[62] || 0;
-    if (lim > 0 && t - last < 1 / lim - 0.002) return;
-    last = t;
-    const dt = DT_FIXO > 0 ? DT_FIXO : Math.min(0.1, t - tPrev);   /* ?dtfixo=0.05: testes quadro a quadro */
-    tPrev = t;
-    pollPad();
-
+  // um quadro completo (simulacao + desenho); usado pelo laco e pela medicao do grafico
+  const render = (t, dt) => {
     // tela e grade de celulas
     const dpr = window.devicePixelRatio || 1;
     const cw = Math.round(window.innerWidth * dpr), ch = Math.round(window.innerHeight * dpr);
@@ -242,16 +253,71 @@ async function main() {
     const objs = new Float32Array(w.memory.buffer, w.voo_objs(), nobjs * 8);
     const rail = railData || (railData = new Float32Array(w.memory.buffer, w.voo_rail(), w.voo_nrail() * 3).slice());
     renderer.frame({ info: I, points, npts, fx, nfx, cells, cols, rows, vrows: vrowsPrev, iw, ih, smooth, objs, nobjs, rail });
+    return I;
+  };
+
+  // ---------- grafico automatico ----------
+  // Do melhor para o mais leve: primeiro o pixel menor, depois a suavizacao de bordas.
+  const LADDER = [[0, 1], [0, 0], [1, 1], [1, 0], [2, 1], [2, 0], [3, 0]];
+  let gfx = -1;
+  const gl = renderer.gl, px1 = new Uint8Array(4);
+  const sync = () => gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px1);   // espera a placa terminar
+  async function benchmark() {
+    setProgress(0.97, 'Ajustando o gráfico para este computador...');
+    w.voo_bench(1);   // cena pesada: perto do mar, com reflexo, gaivotas, de fora
+    let t = performance.now() / 1000;
+    for (let i = 0; i < 4; i++) { render(t += 1 / 60, 1 / 60); sync(); }   // compila os shaders
+    gfx = LADDER.length - 1;
+    for (let i = 0; i < LADDER.length; i++) {
+      w.voo_set_gfx(LADDER[i][0], LADDER[i][1]);
+      // um quadro de aquecimento; se ja for muito lento, nem mede (computador fraco: desce rapido)
+      let t0 = performance.now();
+      render(t += 1 / 60, 1 / 60); sync();
+      if (performance.now() - t0 > 60 && i < LADDER.length - 1) { console.log(`grafico: pixel ${LADDER[i][0] + 1}x suavizar ${LADDER[i][1]}: lento demais`); continue; }
+      t0 = performance.now();
+      const N = 8;
+      for (let k = 0; k < N; k++) { render(t += 1 / 60, 1 / 60); sync(); }
+      const ms = (performance.now() - t0) / N;
+      console.log(`grafico: pixel ${LADDER[i][0] + 1}x suavizar ${LADDER[i][1]}: ${ms.toFixed(1)} ms`);
+      if (ms <= 1000 / 50) { gfx = i; break; }   // 45 fps com folga
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    w.voo_set_gfx(LADDER[gfx][0], LADDER[gfx][1]);
+    w.voo_bench(0);
+  }
+  if (params.get('grafico') !== 'fixo') await benchmark();
+  $('carregando').hidden = true;
+  $('comecar').hidden = false;
+  let slow = 0;   // segundos seguidos abaixo de 40 fps
+  let parkPrev = -1;
+
+  const frame = (now) => {
+    requestAnimationFrame(frame);
+    const t = now / 1000;
+    const dt = DT_FIXO > 0 ? DT_FIXO : Math.min(0.1, t - tPrev);   /* ?dtfixo=0.05: testes quadro a quadro */
+    tPrev = t;
+    pollPad();
+    const I = render(t, dt);
     menuUI.update(I[65] > 0 && started);
-    caderneta.update(I, started && !(I[65] > 0), dt);
+    if (I[65] > 0 && $('dica')) $('dica').style.opacity = 0;
+    if (started && (I[103] | 0) !== parkPrev) { if (parkPrev >= 0) showHint(I[103] > 0 ? 'Freio de estacionamento preso' : 'Freio de estacionamento solto'); parkPrev = I[103] | 0; }
     if (started) rede.tick(I, t);
-    sound.pump(I);
+    sound.pump(info());   // le de novo: a memoria do wasm pode ter crescido
 
     fpsN++;
-    if (t - fpsT >= 0.5) { w.voo_set_fps(fpsN / (t - fpsT)); fpsN = 0; fpsT = t; }
+    if (t - fpsT >= 0.5) {
+      const fps = fpsN / (t - fpsT);
+      w.voo_set_fps(fps);
+      // em voo, se ficar abaixo de 40 fps por ~5 s, desce um degrau (so no automatico)
+      if (started && I[65] < 0.5 && I[108] > 0.5 && gfx >= 0 && gfx < LADDER.length - 1) {
+        slow = fps < 40 ? slow + (t - fpsT) : 0;
+        if (slow > 5) { gfx++; w.voo_set_gfx(LADDER[gfx][0], LADDER[gfx][1]); slow = 0; console.log('grafico mais leve:', LADDER[gfx]); }
+      }
+      fpsN = 0; fpsT = t;
+    }
   };
   requestAnimationFrame(frame);
-  window.__voo = { w, renderer, caderneta, rede };
+  window.__voo = { w, renderer, rede };
 }
 
 main().catch((e) => {

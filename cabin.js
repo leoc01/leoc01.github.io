@@ -30,17 +30,25 @@ uniform float uTanX, uHW;
 uniform vec2 uNF;                   // planos perto e longe (de fora a camera fica longe)
 uniform mat4 uModel;                // parte movel (manche, flaps...): rotacao + translacao
 uniform mat4 uRefl;                 // espelho na agua (identidade fora da passada do reflexo)
+layout(location = 6) in vec4 aInst; // copias repetidas pela placa (dormentes): posicao e rumo
+uniform int uInst;
 uniform vec3 uEyeP;                 // olho da projecao (no reflexo uEye e o olho espelhado, para iluminar)
 out vec3 vPos, vNrm, vCol;
 out vec2 vUV;
 out float vMat, vAO;
 void main() {
-    vec3 P = (uModel * vec4(aPos, 1.0)).xyz;
+    vec3 lp = aPos, ln = aNrm;
+    if (uInst == 1) {
+        float c = cos(aInst.w), s = sin(aInst.w);
+        lp = vec3(c * aPos.x - s * aPos.y, s * aPos.x + c * aPos.y, aPos.z) + aInst.xyz;
+        ln = vec3(c * aNrm.x - s * aNrm.y, s * aNrm.x + c * aNrm.y, aNrm.z);
+    }
+    vec3 P = (uModel * vec4(lp, 1.0)).xyz;
     vec3 d = (uRefl * vec4(P, 1.0)).xyz - uEyeP;
     float x = dot(d, uVR), y = dot(d, uVU), z = dot(d, uVF);
     float n = uNF.x, f = uNF.y;
     gl_Position = vec4(x / uTanX, y / (uTanX * uHW), z * (f + n) / (f - n) - 2.0 * f * n / (f - n), z);
-    vPos = P; vNrm = mat3(uModel) * aNrm; vCol = aCol; vUV = aUV; vMat = aMat; vAO = aAO;
+    vPos = P; vNrm = mat3(uModel) * ln; vCol = aCol; vUV = aUV; vMat = aMat; vAO = aAO;
 }`;
 
 const MAIN_FS = `#version 300 es
@@ -53,9 +61,10 @@ uniform vec3 uEye, uSunB, uLight, uShade;
 uniform float uSunUp, uProp, uSweep;
 uniform float uPanelLight, uNavOn;   // luzes do painel (0..1) e de navegacao acesas
 uniform float uOutside, uBurnt;      // camera fora do aviao; destroco queimado
+uniform float uLit;                  // 0 dia .. 1 noite: janelas do trem e farol acesos (material 13)
 uniform mat4 uShM;
 uniform sampler2DShadow uShadow;
-uniform sampler2D uAtlas;
+uniform sampler2D uAtlas, uPaper;   // painel; folha atual da prancheta
 layout(location = 0) out vec4 oC;
 layout(location = 1) out vec4 oA;
 ${SHELL_GLSL}
@@ -76,7 +85,7 @@ void main() {
     vec3 V = normalize(uEye - vPos);
     vec3 n = normalize(vNrm);
     if (mat == 2 && shellOpen(vPos) < 0.0) discard;
-    bool paint = mat >= 10, skin = mat == 11;
+    bool paint = mat >= 10 && mat <= 12, skin = mat == 11;
     if (mat == 10 && cowlInside(vPos)) discard;   // capo: o pedaco que cairia dentro da cabine some
     if (skin && skinCut(vPos)) discard;   // pele de fora: as mesmas janelas
     if (paint) mat = 5;
@@ -118,6 +127,7 @@ void main() {
     if (dot(n, V) < 0.0) n = -n;   // superficies vistas dos dois lados
     vec3 base = vCol;
     if (mat == 1) { vec4 t = texture(uAtlas, vUV); if (t.a < 0.5) discard; base = t.rgb; }
+    else if (mat == 14) base = texture(uPaper, vUV).rgb;
     else if (mat == 2) base = shellColor(vPos, normalize(vNrm));
     else if (paint) {
         base = livery(vPos, base);
@@ -146,9 +156,14 @@ void main() {
     vec3 L = mix(amb, uLight * mix(1.0, ao, 0.35), band);
     float day = smoothstep(0.55, 0.95, dot(uLight, vec3(0.3, 0.5, 0.2)));
     // de dia os instrumentos ficam sempre legiveis; de noite so com a luz do painel (vermelho-ambar)
+    if (mat == 14) L = max(L, max(vec3(0.55, 0.52, 0.48) * day, vec3(0.55, 0.40, 0.32) * uPanelLight));   // papel legivel (de noite, a luz do painel)
     if (mat == 1) L = max(mix(L, uLight, 0.55 * day), max(vec3(0.42, 0.36, 0.32) * day, vec3(0.62, 0.36, 0.28) * uPanelLight));
     else if (mat != 5 && mat != 9) L += vec3(0.10, 0.035, 0.025) * uPanelLight * ao;   // a luz do painel respinga na cabine
     if (mat == 9 && uNavOn > 0.5) { oC = vec4(min(base * 1.6, vec3(1.0)), 1.0); oA = vec4(n, length(vPos - uEye)); return; }
+    if (mat == 13) {   // janela acesa / farol: de dia vidro escuro, de noite luz quente
+        vec3 c = mix(base * L, vec3(1.0, 0.84, 0.55), uLit);
+        oC = vec4(min(c, vec3(1.0)), 1.0); oA = vec4(n, length(vPos - uEye)); return;
+    }
     vec3 col = base * L;
     if (mat == 6) {   // cromado: brilho do ceu e do sol
         vec3 r = reflect(-V, n);
@@ -288,6 +303,8 @@ export class Cabin {
     buildGlass(gm);
     this.glass = this.upload(gm, gl.STATIC_DRAW);
     this.parts = buildParts().map((q) => ({ name: q.name, group: q.group, buf: this.upload(q.m, gl.STATIC_DRAW) }));
+    this.boardM = this.parts.find((q) => q.name === 'boardM').buf;
+    this.paperTex = [];
     this.ntris = (st.i.length + pr.i.length) / 3 + this.parts.reduce((a, q) => a + q.buf.count / 3, 0);
     this.M = partMatrices({ elev: 0, ail: 0, thr: 0, lever: 0, rud: 0, flap: 0, trim: 0 });
     this.body = true;
@@ -352,14 +369,38 @@ export class Cabin {
         this.draw(q.buf);
         continue;
       }
+      if (q.group === 'boardM') continue;
       if (q.group === 'body') {
-        if (!(own === 0 && !this.body)) { gl.uniformMatrix4fv(loc, false, this.M[q.name]); this.draw(q.buf); }
-        if (this.two && this.M2 && !(own === 1 && !this.body)) { gl.uniformMatrix4fv(loc, false, this.M2[q.name]); this.draw(q.buf); }
+        // lendo a prancheta: o proprio braco direito sai da frente
+        const armOut = this.kbZoom > 0.5 && (q.name === 'upR' || q.name === 'foreR' || q.name === 'handR');
+        if (!(own === 0 && (!this.body || armOut))) { gl.uniformMatrix4fv(loc, false, this.M[q.name]); this.draw(q.buf); }
+        if (this.two && this.M2 && !(own === 1 && (!this.body || armOut))) {
+          gl.uniformMatrix4fv(loc, false, this.M2[q.name]);
+          this.draw(q.name === 'board' ? this.boardM : q.buf);   // papel da direita: desenhado ja espelhado (texto legivel)
+        }
         continue;
       }
       gl.uniformMatrix4fv(loc, false, this.M[q.name]);
       this.draw(q.buf);
     }
+  }
+
+  // alguem comecou a pegar os comandos (a mao vai ao manche antes de assumir)
+  grab(seat) { this.grabSeat = seat; this.grabT = this.clock || 0; }
+
+  // folhas da prancheta (canvas) -> texturas com mipmaps (legiveis de longe e de perto)
+  setPaper(canvases) {
+    const gl = this.gl;
+    this.paperTex = canvases.map((cv) => {
+      const t = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, cv);
+      gl.generateMipmap(gl.TEXTURE_2D);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      if (this.aniso) gl.texParameterf(gl.TEXTURE_2D, this.aniso.TEXTURE_MAX_ANISOTROPY_EXT, Math.min(8, gl.getParameter(this.aniso.MAX_TEXTURE_MAX_ANISOTROPY_EXT)));
+      return t;
+    });
   }
 
   // estado do quadro: painel, partes moveis, camera e sol no referencial do aviao, sombra
@@ -396,6 +437,9 @@ export class Cabin {
     const de = len(this.eye);
     this.nf = outside ? [Math.max(0.05, (de - 8) * 0.5), de + 12] : [0.02, 60];
     this.burnt = I[38] > 0.5 ? 1 : 0;
+    this.sheet = I[95] | 0;
+    this.kbZoom = I[104];
+    this.lit = Math.max(I[87], 1 - Math.min(1, Math.max(0, I[91] * 4)));   // noite ou crepusculo
     this.tanX = I[12]; this.hw = ih / iw;
     const sun = [I[20], I[21], I[22]];
     this.sunB = norm(toB(sun));
@@ -404,7 +448,7 @@ export class Cabin {
     this.propA = I[37];
     this.rpm = I[73];
     this.lights = I[88];
-    this.panelLight = this.lights >= 1 ? 1 : 0;
+    this.panelLight = (this.lights & 1) ? 1 : 0;
     this.sweep = Math.min(Math.max(I[73] / 60 * Math.PI * 2 * this.dt, 0), Math.PI);
     // olhando para tras o corpo do piloto some (o tronco gira junto com a cabeca)
     const yaw = Math.atan2(this.vf[1], this.vf[0]);
@@ -432,9 +476,12 @@ export class Cabin {
       if (len(sub(this.hand || at, at)) < 0.02 || this.leverWait > 0.6) { this.leverVis = st.lever; this.holdT = tk + 220; this.leverWait = 0; }
     } else if (tk < this.holdT) want = 'lever';
     else if (tk < this.trimT) want = 'trim';
+    // lendo a prancheta (quem pilota): a mao direita sai da manete e segura a borda dela
+    const flyNow = I[100] > 0.5 ? I[101] | 0 : 0, meNow = I[100] > 0.5 ? I[99] | 0 : 0;
+    if (I[104] > 0.3 && flyNow === meNow && !pending) want = 'board';
     this.leverPos += (this.leverVis - this.leverPos) * (1 - Math.exp(-this.dt * 18));   // a alavanca desliza com a mao
     st.lever = this.leverPos;
-    const tgt = handTarget(want, st);
+    const tgt = want === 'board' ? [0.55, flyNow === 1 ? 0.04 : -0.04, 0.05] : handTarget(want, st);
     if (!this.hand) this.hand = tgt;
     const kh = 1 - Math.exp(-this.dt * (want === 'thr' ? 9 : 14));
     this.hand = add(this.hand, mul(sub(tgt, this.hand), kh));
@@ -442,10 +489,24 @@ export class Cabin {
     this.two = I[100] > 0.5;
     this.mySeat = this.two ? I[99] | 0 : 0;
     const fly = this.two ? I[101] | 0 : 0;
-    st.lap = fly !== 0;
+    // troca de comandos: quem assume poe a mao no manche primeiro (grab); depois que ele assume, o
+    // outro solta o manche, depois a manete, e so entao a outra mao de quem assumiu vai a manete
+    const nowc = this.clock;
+    if (this.flyPrev === undefined) { this.flyPrev = fly; this.switchT = -9; this.oldFly = -1; this.wY = [1, 0]; this.wT = [1, 0]; this.wY[fly] = 1; }
+    if (fly !== this.flyPrev) { this.oldFly = this.flyPrev; this.flyPrev = fly; this.switchT = nowc; this.grabSeat = -1; }
+    for (const p of [0, 1]) {
+      const grabbing = this.grabSeat === p && nowc - this.grabT < 3;
+      const tY = p === fly || grabbing ? 1 : 0;
+      const tT = p === fly ? (nowc - this.switchT > 0.65 ? 1 : 0) : (p === this.oldFly && nowc - this.switchT < 0.3 ? 1 : 0);
+      const k = 1 - Math.exp(-this.dt * 9);
+      this.wY[p] += (tY - this.wY[p]) * k;
+      this.wT[p] += (tT - this.wT[p]) * k;
+    }
+    if (!this.two) { this.wY = [1, 0]; this.wT = [1, 0]; }
+    st.wY = this.wY[0]; st.wT = this.wT[0];
     st.hand = fly === 0 ? this.hand : null;
     this.M = partMatrices(st);
-    this.M2 = this.two ? rightPersonMatrices(st, { lap: fly !== 1, hand: fly === 1 ? this.hand : null }) : null;
+    this.M2 = this.two ? rightPersonMatrices(st, { wY: this.wY[1], wT: this.wT[1], hand: fly === 1 ? this.hand : null }) : null;
     // matriz da sombra: projecao ortografica ao longo do sol, ~8 m em volta da cabine
     const Ls = this.sunB, hint = Math.abs(Ls[2]) < 0.95 ? [0, 0, 1] : [1, 0, 0];
     const lx = norm(cross(hint, Ls)), ly = cross(Ls, lx), C = [-1.15, 0, 0.3], E = 6.4, Dz = 12;   // o aviao inteiro (a sombra no chao vem daqui tambem)
@@ -595,10 +656,12 @@ export class Cabin {
     gl.uniform1f(u.uOutside, this.outside ? 1 : 0);
     gl.uniform1f(u.uBurnt, this.burnt);
     gl.uniform1f(u.uPanelLight, this.panelLight);
-    gl.uniform1f(u.uNavOn, this.lights >= 1 ? 1 : 0);
+    gl.uniform1f(u.uNavOn, (this.lights & 1) ? 1 : 0);
+    gl.uniform1f(u.uLit, this.lit || 0);
     gl.uniformMatrix4fv(u.uShM, false, this.shM);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.shTex); gl.uniform1i(u.uShadow, 0);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.art.tex); gl.uniform1i(u.uAtlas, 1);
+    gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, this.paperTex[this.sheet | 0] || this.art.tex); gl.uniform1i(u.uPaper, 2);
     // o mundo vivo (trem, trilhos, gaivotas) primeiro, com profundidade propria (longe); depois o
     // aviao por cima com a dele: o aviao esta sempre na frente do que esta fora dele
     gl.uniform1f(u.uOutside, 1);

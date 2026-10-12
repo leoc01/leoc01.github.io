@@ -243,7 +243,7 @@ function drawSwitch(c, x, y, on) {
   rrect(c, x - w + 2, t + 2, x + w - 2, b - 2, 2, on ? '#fbf8f0' : '#a9a397');
   rrect(c, x - w + 2, (on ? y : y - h) + 2, x + w - 2, (on ? y + h : y) - 2, 2, on ? '#bdb7aa' : '#f4f0e6');
 }
-const switchOn = (lv) => [true, lv >= 1, lv >= 3, lv >= 3, lv >= 1, lv >= 2];
+const switchOn = (lv) => [true, !!(lv & 1), !!(lv & 4), !!(lv & 4), !!(lv & 1), !!(lv & 2)];   // bits: 1 nav+farol, 2 strobe, 4 pouso+taxi
 
 function drawCompass(c, hdg) {   // 200 x 120: faixa de proa grande e legivel
   c.fillStyle = '#0e0f12'; c.fillRect(0, 0, 200, 120);

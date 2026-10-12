@@ -2,6 +2,8 @@
 import { instantiate } from './wasm.js';
 import { Renderer } from './renderer.js';
 import { MenuUI } from './menu.js';
+import { Caderneta } from './caderneta.js';
+import { Rede } from './rede.js';
 import { buildGraph, NSRC, OUT_CHANNELS } from './spatial.js';
 
 const SEED = 2026;
@@ -137,6 +139,7 @@ async function main() {
   $('comecar').hidden = false;
 
   const sound = new Sound(w);
+  const rede = new Rede(w, sound);   // dois no mesmo aviao
   let started = false;
   const start = async () => {
     if (started) return;
@@ -152,13 +155,14 @@ async function main() {
   const down = new Set();
   window.addEventListener('keydown', (e) => {
     if (!started) { if (!e.repeat) start(); e.preventDefault(); return; }
+    if (rede.key(e, true)) return;
     const k = keyCode(e);
     if (k < 0) return;
     e.preventDefault();
     if (!e.repeat) { w.voo_keypress(k); down.add(k); }
     w.voo_key(k, 1);
   });
-  window.addEventListener('keyup', (e) => { const k = keyCode(e); if (k >= 0) { w.voo_key(k, 0); down.delete(k); } });
+  window.addEventListener('keyup', (e) => { if (rede.key(e, false)) return; const k = keyCode(e); if (k >= 0) { w.voo_key(k, 0); down.delete(k); } });
   window.addEventListener('blur', () => { for (const k of down) w.voo_key(k, 0); down.clear(); });
 
   // controle
@@ -190,9 +194,11 @@ async function main() {
 
   // ---------- laco ----------
   let tPrev = performance.now() / 1000, last = 0, fpsN = 0, fpsT = tPrev;
-  const info = () => new Float32Array(w.memory.buffer, w.voo_info(), 96);
+  const info = () => new Float32Array(w.memory.buffer, w.voo_info(), 128);
   let iw = 0, ih = 0, vrowsPrev = 30;
-  const menuUI = new MenuUI(w);
+  const menuUI = new MenuUI(w, { label: 'Voar junto (2 no avião)', onClick: () => rede.open() });
+  const caderneta = new Caderneta(w);
+  let railData = null;
   const frame = (now) => {
     requestAnimationFrame(frame);
     const t = now / 1000;
@@ -232,15 +238,20 @@ async function main() {
     const nfx = w.voo_nfx();
     const fx = new Float32Array(w.memory.buffer, w.voo_fx(), nfx * 8);
     const cells = new Uint32Array(w.memory.buffer, cp, cols * rows * 3);
-    renderer.frame({ info: I, points, npts, fx, nfx, cells, cols, rows, vrows: vrowsPrev, iw, ih, smooth });
+    const nobjs = w.voo_nobjs();
+    const objs = new Float32Array(w.memory.buffer, w.voo_objs(), nobjs * 8);
+    const rail = railData || (railData = new Float32Array(w.memory.buffer, w.voo_rail(), w.voo_nrail() * 3).slice());
+    renderer.frame({ info: I, points, npts, fx, nfx, cells, cols, rows, vrows: vrowsPrev, iw, ih, smooth, objs, nobjs, rail });
     menuUI.update(I[65] > 0 && started);
+    caderneta.update(I, started && !(I[65] > 0), dt);
+    if (started) rede.tick(I, t);
     sound.pump(I);
 
     fpsN++;
     if (t - fpsT >= 0.5) { w.voo_set_fps(fpsN / (t - fpsT)); fpsN = 0; fpsT = t; }
   };
   requestAnimationFrame(frame);
-  window.__voo = { w, renderer };
+  window.__voo = { w, renderer, caderneta, rede };
 }
 
 main().catch((e) => {

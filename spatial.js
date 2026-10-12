@@ -10,9 +10,9 @@
 // Por cima, uma ambiencia por convolucao: fora, ecos esparsos do terreno e uma cauda
 // longa e baixa; na cabine, reflexoes curtas e densas de um espaco pequeno.
 
-export const NSRC = 9;           // AS_COUNT no C
+export const NSRC = 11;          // AS_COUNT no C
 export const WIND = 2;           // AS_WIND: sem posicao, estereo
-export const OUT_CHANNELS = [1, 1, 2, 1, 1, 1, 1, 1, 1];
+export const OUT_CHANNELS = [1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1];
 
 // resposta ao impulso sintetica (estereo, descorrelacionada)
 function makeIR(ctx, kind) {

@@ -242,6 +242,7 @@ export class Renderer {
     // o aviao e sempre a malha 3D: de dentro (cabine) ou de fora (inteiro, com pele e trem de pouso)
     const ck = I[17] > 0 && I[38] < 0.5;
     this.cabin.targets(f.iw, f.ih, W, viewH);
+    if (f.objs) this.cabin.vida.setFrame(f.objs, f.nobjs, f.rail, I);
     this.cabin.prepare(I, f.iw, f.ih, !ck);
     if (ck) this.cabin.maskPass(f.iw, f.ih);   // de fora nao: o relevo pode passar na frente do aviao
 

@@ -7,6 +7,10 @@
 // Selecao no jogo (SELECT no controle, N no teclado): 0 apagadas, 1 navegacao + farol,
 // 2 + strobes, 3 + farol de pouso e taxi.
 
+// as luzes (posicao, cor, nivel) vem do aviao em uso (aviao-*.js)
+import { LIGHTS as DEFS } from './aviao.js';
+const LAND = DEFS.find((d) => d.kind === 'land');
+
 const VS = `#version 300 es
 precision highp float;
 layout(location = 0) in vec4 aP;   // posicao relativa a camera (camera: x direita, y cima, z frente) e raio (m)
@@ -47,16 +51,6 @@ void main() {
     o = vec4(c, 0.0);
 }`;
 
-// luzes no referencial do aviao (x frente, y direita, z cima): posicao, raio do brilho, cor, nivel minimo
-const DEFS = [
-  { p: [0.10, -5.69, 0.90], r: 0.9, c: [1.0, 0.12, 0.08], lv: 1, tol: 1.05 },                 // navegacao esquerda
-  { p: [0.10, 5.69, 0.90], r: 0.9, c: [0.15, 1.0, 0.30], lv: 1, tol: 1.05 },                  // direita
-  { p: [-5.56, 0, 0.50], r: 0.7, c: [1.0, 0.98, 0.92], lv: 1 },                    // cauda
-  { p: [-5.05, 0, 2.00], r: 1.2, c: [1.0, 0.10, 0.05], lv: 1, kind: 'beacon' },     // farol rotativo
-  { p: [0.00, -5.72, 0.90], tol: 1.2, r: 2.4, c: [1.0, 1.0, 1.0], lv: 2, kind: 'strobe' },    // strobes nas pontas
-  { p: [0.00, 5.72, 0.90], tol: 1.2, r: 2.4, c: [1.0, 1.0, 1.0], lv: 2, kind: 'strobe' },
-  { p: [3.02, 0, -0.24], r: 1.4, c: [1.0, 0.93, 0.78], lv: 3, kind: 'land' },        // farol de pouso no nariz
-];
 
 export class Lights {
   constructor(gl, compile) {
@@ -82,7 +76,7 @@ export class Lights {
   static landing(I) {
     if (I[88] < 3 || I[38] > 0.5) return null;
     const f = [I[28], I[29], I[30]], u = [I[34], I[35], I[36]];
-    const pos = [0, 1, 2].map((k) => I[25 + k] + f[k] * 3.0 - u[k] * 0.24);
+    const pos = [0, 1, 2].map((k) => I[25 + k] + f[k] * LAND.p[0] + u[k] * LAND.p[2]);
     const d = [0, 1, 2].map((k) => f[k] - u[k] * 0.07), l = Math.hypot(...d);
     return { pos, dir: d.map((v) => v / l) };
   }

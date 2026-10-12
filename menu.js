@@ -16,11 +16,11 @@ const pretty = (v) => VALUES[v] ?? v.replace(/^pixel (\d)x$/, '$1×');
 
 const KEYS = [
   ['↑ ↓ ← →', 'manche'], ['W  S', 'motor'], ['A  D', 'leme'], ['F  V', 'flaps'], [',  .', 'trim (nariz acima / abaixo)'],
-  ['Espaço', 'freios'], ['I J K L', 'olhar em volta'], ['N', 'luzes do avião'], ['C', 'câmera'], ['M', 'mapa'], ['Esc', 'menu'],
+  ['Espaço', 'freios'], ['I J K L', 'olhar em volta'], ['N', 'luzes do avião'], ['C', 'câmera'], ['M  H  U', 'carta, checklist, manual'], ['G', 'voar junto'], ['T', 'troca de comandos'], ['B', 'falar (segurar)'], ['Esc', 'menu'],
 ];
 const PAD = [
   ['L', 'manche'], ['RB  LB', 'motor'], ['RT  LT', 'leme'], ['A  B', 'flaps'], ['X  Y', 'trim (nariz acima / abaixo)'],
-  ['↓', 'freios'], ['R', 'olhar em volta'], ['←  →', 'luzes do avião'], ['SELECT', 'câmera'], ['↑', 'mapa'], ['START', 'menu'],
+  ['↓', 'freios'], ['R', 'olhar em volta'], ['←  →', 'luzes do avião'], ['SELECT', 'câmera'], ['↑', 'carta, checklist, manual'], ['L3', 'troca de comandos'], ['R3', 'falar (segurar)'], ['START', 'menu'],
 ];
 
 const CSS = `
@@ -62,8 +62,9 @@ const CSS = `
 `;
 
 export class MenuUI {
-  constructor(w) {
+  constructor(w, extra) {
     this.w = w;
+    this.extra = extra;   // linha so do navegador (ex.: voar junto)
     const st = document.createElement('style');
     st.textContent = CSS;
     document.head.appendChild(st);
@@ -76,6 +77,7 @@ export class MenuUI {
     this.el.addEventListener('click', (e) => {
       const row = e.target.closest('.row');
       if (!row) { if (e.target === this.el) this.w.voo_keypress(KEY_ESC); return; }
+      if (row.dataset.i === 'x') { this.extra?.onClick(); return; }
       const i = +row.dataset.i;
       this.w.voo_menu_sel(i);
       const arr = e.target.closest('.arr');
@@ -84,7 +86,7 @@ export class MenuUI {
     });
     this.el.addEventListener('mousemove', (e) => {
       const row = e.target.closest('.row');
-      if (row && !row.classList.contains('sel')) this.w.voo_menu_sel(+row.dataset.i);
+      if (row && row.dataset.i !== 'x' && !row.classList.contains('sel')) this.w.voo_menu_sel(+row.dataset.i);
     });
   }
 
@@ -108,6 +110,7 @@ export class MenuUI {
     lines.slice(1).forEach((ln, i) => {
       const [, val, kind] = ln.split('\t');
       if (i in GROUPS && GROUPS[i]) rows += `<div class="grp">${GROUPS[i]}</div>`;
+      if (i === 9 && this.extra) rows += `<div class="grp">Junto</div><div class="row" data-i="x"><span>${this.extra.label}</span><span class="go">G</span></div>`;
       if (i === 9) rows += '<div style="height:10px"></div>';
       const cls = ['row', i === sel ? 'sel' : '', kind === 'a' ? 'act' : '', i === 9 ? 'quit' : ''].join(' ');
       let right = '';

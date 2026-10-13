@@ -3,6 +3,8 @@
 // este arquivo so desenha o que o C descreve e manda comandos (teclas virtuais) de volta.
 // Teclado e controle funcionam como antes; o mouse escolhe e clica.
 
+import { VERSAO } from './versao.js';
+
 const KEY_LEFT = 258, KEY_RIGHT = 259, KEY_ESC = 261, KEY_ENTER = 262;
 
 // rotulos e valores com acento (o C fala ASCII)
@@ -34,6 +36,7 @@ const CSS = `
 #menu .card { background: #efe6d1; color: #2b211d; border-radius: 18px; width: min(460px, 92vw); max-height: calc(100vh - 32px); overflow-y: auto;
   box-shadow: 0 2px 0 #c9a24a inset, 0 24px 60px #000a, 0 0 0 1px #00000040; overflow: hidden; display: flex; flex-direction: column; }
 #menu .band { background: linear-gradient(#8a2420, #6e1a17); color: #f6efe0; padding: 14px 26px 11px; position: relative; }
+#menu .ver { position: absolute; right: 22px; bottom: 12px; font-size: 11px; letter-spacing: 0.12em; opacity: 0.55; }
 #menu .band::after { content: ""; position: absolute; left: 0; right: 0; bottom: -5px; height: 3px; background: #c9a24a; }
 #menu .brand { font: italic 700 30px/1 "DejaVu Serif", Georgia, serif; letter-spacing: 0.02em; }
 #menu .brand small { font: 600 12px/1 inherit; font-style: normal; letter-spacing: 0.28em; opacity: 0.75; margin-left: 10px;
@@ -124,7 +127,7 @@ export class MenuUI {
     const keys = (pad ? PAD : KEYS).map(([k, a]) => `<tr><td>${k.split(/\s{2,}/).map((x) => `<kbd>${x}</kbd>`).join(' ')}</td><td>${a}</td></tr>`).join('');
     this.el.innerHTML = `
       <div class="card">
-        <div class="band"><span class="brand">Voo<small>PAUSA</small></span></div>
+        <div class="band"><span class="brand">Voo<small>PAUSA</small></span><span class="ver">${VERSAO}</span></div>
         <div class="rows">${rows}
           <div class="foot"><span>${pad ? 'D-pad escolhe · A confirma · B volta' : 'setas escolhem · Enter confirma · Esc volta'}</span><span>mouse também</span></div>
         </div>

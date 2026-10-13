@@ -25,6 +25,7 @@
   @keyframes pisca { 50% { box-shadow: 0 3px 0 #4a100e, 0 0 0 6px #c9a24a33; } }
   .teclas { margin-top: 30px; color: var(--dim); font-size: 13px; line-height: 1.8; }
   #erro { color: #ff8a80; }
+  #versao { position: absolute; right: 16px; bottom: 12px; color: var(--dim); font-size: 12px; letter-spacing: 0.12em; opacity: 0.6; }
 </style>
 </head>
 <body>
@@ -40,6 +41,7 @@
     </div>
     <div id="comecar" hidden>aperte <b>A</b> no controle ou <b>Espaço</b> no teclado</div>
   </div>
+  <div id="versao"></div>
 </div>
 <script type="module" src="./voo.js"></script>
 </body>

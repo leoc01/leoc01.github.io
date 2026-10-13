@@ -5,8 +5,11 @@
 // resposta, que quem convidou cola no jogo. Os dois códigos são a descrição da conexão (SDP)
 // comprimida; os endereços são descobertos por STUN público (grátis, não guarda nada). Nenhum dado
 // fica em servidor nenhum. Quando a ligação direta não passa (algumas operadoras e redes de empresa),
-// o TURN da Cloudflare retransmite: TURN_URL é um Worker (tools/turn-worker.js) que gera uma
+// o TURN da Cloudflare retransmite: TURN_URL é um Worker (tools/worker/index.js) que gera uma
 // credencial de um dia; o WebRTC só usa o TURN se o caminho direto falhar.
+// O mesmo Worker tem "salas" de encontro: quem convida guarda a oferta lá e o link leva só o nome da
+// sala (#sala=...); quem recebe lê a oferta e deixa a resposta, que o jogo de quem convidou busca
+// sozinho (sem copiar código). Se o Worker não responder, volta ao jeito manual (#convite= + código).
 //
 // Quem está com os comandos calcula a física e manda ~20 retratos por segundo do avião; o outro só
 // mostra (src/net.c interpola). Troca de comandos, sem confirmação:
@@ -21,7 +24,8 @@ const pageLocal = () => location.protocol === 'file:' ||
   /^(localhost|127\.|0\.0\.0\.0|\[::1\]|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(location.hostname);
 const STUN = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }];
 // Worker da Cloudflare que devolve { iceServers } com STUN + TURN; vazio = so STUN
-const TURN_URL = 'https://voo-turn.leoc01.workers.dev';
+// (testes locais: ?worker=http://localhost:8787, so quando a pagina vem de localhost)
+const TURN_URL = (pageLocal() && new URLSearchParams(location.search).get('worker')) || 'https://voo-turn.leoc01.workers.dev';
 
 // STUN + TURN do Worker; se ele nao responder em 2,5 s, segue so com STUN
 async function iceServers() {
@@ -34,6 +38,19 @@ async function iceServers() {
       .filter((s) => s.urls.length);
     return ice.length ? [...STUN, ...ice] : STUN;
   } catch (e) { return STUN; }
+}
+
+// salas de encontro no Worker (tools/worker/index.js); qualquer erro = jeito manual
+async function sala(caminho, corpo) {
+  if (!TURN_URL) throw new Error('sem worker');
+  const r = await fetch(`${TURN_URL}/sala${caminho}`, {
+    method: corpo ? 'POST' : 'GET', body: corpo && JSON.stringify(corpo),
+    headers: corpo ? { 'Content-Type': 'application/json' } : undefined,
+    signal: AbortSignal.timeout(5000), cache: 'no-store',
+  });
+  if (r.status === 204) return null;
+  if (!r.ok) throw new Error((await r.text()) || 'erro ' + r.status);
+  return r.json();
 }
 const SEND_HZ = 20;
 
@@ -99,8 +116,8 @@ export class Rede {
     this.lastSend = 0;
     this.padPrev = [false, false];
     this.padA = true;   // o A que comecou o jogo precisa ser solto antes
-    const m = location.hash.match(/#convite=([\w-]+)/);
-    if (m) { this.invite = m[1]; history.replaceState(null, '', location.pathname + location.search); }
+    const m = location.hash.match(/#convite=([\w-]+)/) || location.hash.match(/#(sala)=([a-z0-9]+)/);
+    if (m) { this.invite = m[2] ? 'sala:' + m[2] : m[1]; history.replaceState(null, '', location.pathname + location.search); }
   }
 
   // ---------- painel ----------
@@ -121,8 +138,8 @@ export class Rede {
     const seg = (name, opts) => `<span class="seg" data-k="${name}">${opts.map(([v, t]) => `<button data-v="${v}" class="${c[name] === v ? 'on' : ''}">${t}</button>`).join('')}</span>`;
     const el = this.card('Voar junto', `
       <p>Duas pessoas no mesmo avião, cada uma no seu computador. Quem está com os comandos pilota; o outro vê tudo,
-      conversa pelo interfone e pode pegar os comandos a qualquer hora. Nada passa por servidor: o convite vai
-      pelo WhatsApp (ou onde quiser). Você começa pilotando.</p>
+      conversa pelo interfone e pode pegar os comandos a qualquer hora. O link do convite vai pelo WhatsApp
+      (ou onde quiser); o avião e a voz vão direto de um computador ao outro. Você começa pilotando.</p>
       ${pageLocal() ? `<p class="aviso">O jogo está aberto só neste computador ou rede (${location.host || 'arquivo local'}): o link do
       convite não abre para quem está longe. Abra o jogo pelo endereço publicado (ex.: GitHub Pages) e convide de lá.</p>` : ''}
       <div class="row"><label>Meu banco</label>${seg('seat', [[0, 'esquerdo'], [1, 'direito']])}</div>
@@ -131,9 +148,11 @@ export class Rede {
         <p><b>1.</b> Mande este link para a outra pessoa:</p>
         <textarea readonly data-link></textarea>
         <div class="row"><button class="go sec" data-a="copy">Copiar link</button></div>
-        <p><b>2.</b> Ela abre o link, aceita e te manda um código de resposta. Cole aqui:</p>
+        <div data-auto hidden><p><b>2.</b> Ela abre o link e aceita; a ligação se faz sozinha.</p>
+        <div class="row"><span class="st" data-st3>esperando a outra pessoa abrir o link...</span></div></div>
+        <div data-manual><p><b>2.</b> Ela abre o link, aceita e te manda um código de resposta. Cole aqui:</p>
         <textarea data-ans placeholder="código de resposta"></textarea>
-        <div class="row"><button class="go" data-a="con">Conectar</button><span class="st" data-st2></span></div>
+        <div class="row"><button class="go" data-a="con">Conectar</button><span class="st" data-st2></span></div></div>
       </div>
       <p class="hint">Em voo: <kbd>T</kbd>/L3 solta ou pega os comandos · <kbd>B</kbd>/R3 (segurar) fala · <kbd>Enter</kbd> chat · <kbd>G</kbd> este painel</p>`);
     el.querySelectorAll('.seg').forEach((s) => s.querySelectorAll('button').forEach((b) => {
@@ -142,9 +161,12 @@ export class Rede {
     el.querySelector('[data-a=mk]').onclick = async () => {
       const st = el.querySelector('.st'); st.textContent = 'preparando...';
       try {
-        const link = await this.createInvite();
+        const { link, auto } = await this.createInvite();
         el.querySelector('[data-link]').value = link;
+        el.querySelector('[data-auto]').hidden = !auto;
+        el.querySelector('[data-manual]').hidden = auto;
         el.querySelector('[data-step2]').hidden = false;
+        if (auto) this.waitAnswer(auto, el.querySelector('[data-st3]'));
         st.textContent = '';
       } catch (e) { st.textContent = 'erro: ' + e.message; }
     };
@@ -160,19 +182,33 @@ export class Rede {
       <p>Alguém te convidou para voar junto no mesmo avião.</p>
       <div class="row"><button class="go" data-a="ok">Aceitar (A / Espaço)</button><span class="st"></span></div>
       <div data-step2 hidden>
+        <div data-manual>
         <p>Mande este código de resposta para quem te convidou (ele cola no jogo dele):</p>
         <textarea readonly data-ans></textarea>
         <div class="row"><button class="go sec" data-a="copy">Copiar código (A / Espaço)</button><span class="st" data-st2>esperando a ligação...</span></div>
+        </div>
+        <div data-auto hidden><div class="row"><span class="st">conectando...</span></div></div>
       </div>`);
     const ok = async () => {
       if (this.guestStep) return;
       this.guestStep = 1;
       const st = el.querySelector('.st'); st.textContent = 'preparando...';
       try {
-        el.querySelector('[data-ans]').value = await this.acceptInvite(this.invite);
+        const nome = this.invite.startsWith('sala:') && this.invite.slice(5);
+        let code = this.invite;
+        if (nome) {
+          const o = await sala('/' + nome).catch((e) => { throw new Error(/expirou|existe/.test(e.message) ? 'o convite expirou, peça um novo' : e.message); });
+          code = o.oferta;
+        }
+        const ans = await this.acceptInvite(code);
+        el.querySelector('[data-ans]').value = ans;
+        // com sala: deixa a resposta lá e o outro jogo pega sozinho; se falhar, mostra o código
+        const auto = nome && await sala(`/${nome}/resposta`, { resposta: ans }).then(() => true, () => false);
+        el.querySelector('[data-auto]').hidden = !auto;
+        el.querySelector('[data-manual]').hidden = !!auto;
         el.querySelector('[data-step2]').hidden = false; st.textContent = '';
-        this.guestStep = 2;
-        copy();
+        this.guestStep = auto ? 3 : 2;
+        if (!auto) copy();
       } catch (e) { st.textContent = 'convite inválido: ' + e.message; this.guestStep = 0; }
     };
     const copy = () => {
@@ -181,7 +217,7 @@ export class Rede {
     };
     el.querySelector('[data-a=ok]').onclick = ok;
     el.querySelector('[data-a=copy]').onclick = copy;
-    this.guestOk = () => (this.guestStep === 2 ? copy() : ok());   // A / Espaco
+    this.guestOk = () => (this.guestStep === 2 ? copy() : this.guestStep === 3 ? 0 : ok());   // A / Espaco
   }
   renderConnected() {
     const el = this.card('Voando junto', `
@@ -233,7 +269,24 @@ export class Rede {
     await pc.setLocalDescription(await pc.createOffer());
     await this.gathered(pc);
     const code = await packCode({ v: 1, sdp: pc.localDescription.sdp, seat: this.cfg.seat });
-    return `${location.origin}${location.pathname}#convite=${code}`;
+    const base = `${location.origin}${location.pathname}`;
+    const s = await sala('', { oferta: code, assento: this.cfg.seat }).catch(() => null);
+    if (s?.id) return { link: `${base}#sala=${s.id}`, auto: s.id };
+    return { link: `${base}#convite=${code}`, auto: null };
+  }
+  // quem convida: busca a resposta na sala a cada 1 s ate ligar (ou desistir do convite)
+  async waitAnswer(id, st) {
+    const pc = this.pc;
+    for (let i = 0; i < 900 && this.pc === pc && !this.on; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      if (this.pc !== pc || this.on) return;
+      const r = await sala(`/${id}/resposta`).catch(() => null);
+      if (!r?.resposta) continue;
+      st.textContent = 'conectando...';
+      try { await this.acceptAnswer(r.resposta); } catch (e) { st.textContent = 'resposta inválida: ' + e.message; }
+      return;
+    }
+    if (this.pc === pc && !this.on) st.textContent = 'o convite expirou; crie outro';
   }
   async acceptAnswer(code) {
     const a = await unpackCode(code);

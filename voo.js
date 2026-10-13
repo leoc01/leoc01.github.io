@@ -4,10 +4,12 @@ import { Renderer } from './renderer.js';
 import { MenuUI } from './menu.js';
 import { buildSheets } from './caderneta.js';
 import { Rede } from './rede.js';
+import { VERSAO } from './versao.js';
 import { buildGraph, NSRC, OUT_CHANNELS } from './spatial.js';
 
 const SEED = 2026;
 const $ = (id) => document.getElementById(id);
+$('versao').textContent = VERSAO;
 const params = new URLSearchParams(location.search);
 const DT_FIXO = parseFloat(params.get('dtfixo') || '0');
 

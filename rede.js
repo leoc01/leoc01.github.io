@@ -4,7 +4,9 @@
 // quem convida gera um link e manda (WhatsApp etc.); quem recebe abre o link e devolve um código de
 // resposta, que quem convidou cola no jogo. Os dois códigos são a descrição da conexão (SDP)
 // comprimida; os endereços são descobertos por STUN público (grátis, não guarda nada). Nenhum dado
-// fica em servidor nenhum.
+// fica em servidor nenhum. Quando a ligação direta não passa (algumas operadoras e redes de empresa),
+// o TURN da Cloudflare retransmite: TURN_URL é um Worker (tools/turn-worker.js) que gera uma
+// credencial de um dia; o WebRTC só usa o TURN se o caminho direto falhar.
 //
 // Quem está com os comandos calcula a física e manda ~20 retratos por segundo do avião; o outro só
 // mostra (src/net.c interpola). Troca de comandos, sem confirmação:
@@ -18,6 +20,21 @@
 const pageLocal = () => location.protocol === 'file:' ||
   /^(localhost|127\.|0\.0\.0\.0|\[::1\]|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(location.hostname);
 const STUN = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }];
+// Worker da Cloudflare que devolve { iceServers } com STUN + TURN; vazio = so STUN
+const TURN_URL = 'https://voo-turn.leoc01.workers.dev';
+
+// STUN + TURN do Worker; se ele nao responder em 2,5 s, segue so com STUN
+async function iceServers() {
+  if (!TURN_URL) return STUN;
+  try {
+    const r = await fetch(TURN_URL, { signal: AbortSignal.timeout(2500), cache: 'no-store' });
+    const j = await r.json();
+    // porta 53 e bloqueada pelos navegadores e, sem trickle, so atrasaria a coleta
+    const ice = (j.iceServers || []).map((s) => ({ ...s, urls: [].concat(s.urls).filter((u) => !/:53(\?|$)/.test(u)) }))
+      .filter((s) => s.urls.length);
+    return ice.length ? [...STUN, ...ice] : STUN;
+  } catch (e) { return STUN; }
+}
 const SEND_HZ = 20;
 
 const CSS = `
@@ -175,8 +192,8 @@ export class Rede {
   }
 
   // ---------- conexão ----------
-  newPC(offerer) {
-    const pc = new RTCPeerConnection({ iceServers: STUN });
+  async newPC(offerer) {
+    const pc = new RTCPeerConnection({ iceServers: await iceServers() });
     this.pc = pc;
     // canal de voz criado ja na oferta (sem microfone ainda: ele entra no primeiro "falar", sem renegociar)
     if (offerer) this.audioTx = pc.addTransceiver('audio', { direction: 'sendrecv' });
@@ -208,7 +225,7 @@ export class Rede {
     if (dcCtl.readyState === 'open') ready(); else dcCtl.onopen = ready;
   }
   async createInvite() {
-    const pc = this.newPC(true);
+    const pc = await this.newPC(true);
     this.host = true;
     const dcState = pc.createDataChannel('estado', { ordered: false, maxRetransmits: 0 });
     const dcCtl = pc.createDataChannel('ctl', { ordered: true });
@@ -227,7 +244,7 @@ export class Rede {
     this.host = false;
     this.cfg = { seat: 1 - o.seat };
     this.hostSeat = o.seat;
-    const pc = this.newPC(false);
+    const pc = await this.newPC(false);
     let got = {};
     pc.ondatachannel = (e) => { got[e.channel.label] = e.channel; if (got.estado && got.ctl) this.wireData(got.estado, got.ctl); };
     await pc.setRemoteDescription({ type: 'offer', sdp: o.sdp });

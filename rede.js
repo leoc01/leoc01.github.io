@@ -14,6 +14,9 @@
 //    de quem assumiu vai à manete — ver Cabin.prepare)
 //   B / R3 (segurar) .......... fala no interfone (voz)      Enter ..... chat      G ..... este painel
 
+// pagina servida so nesta maquina/rede: o link do convite nao abre para quem esta longe
+const pageLocal = () => location.protocol === 'file:' ||
+  /^(localhost|127\.|0\.0\.0\.0|\[::1\]|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(location.hostname);
 const STUN = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }];
 const SEND_HZ = 20;
 
@@ -37,6 +40,7 @@ const CSS = `
 #rede .go.sec { background: #d9c9a8; color: #6e1a17; }
 #rede .st { color: #6b5c4c; font-size: 13px; min-height: 1.3em; }
 #rede .hint { color: #8a7a68; font-size: 12.5px; }
+#rede .aviso { background: #f6e3c4; border-left: 3px solid #c0762a; padding: 6px 9px; font-size: 13px; }
 #rede kbd { font: 700 11px/1 "DejaVu Sans Mono", monospace; background: #fbf7ec; border-radius: 4px; padding: 2px 5px; box-shadow: 0 1px 0 #9c8a6a; }
 #juntos { position: fixed; left: 12px; top: 10px; color: #f6efe0; font: 600 12.5px/1.35 "DejaVu Sans Condensed", Arial, sans-serif;
   background: #1c1413b8; border: 1px solid #c9a24a55; border-radius: 10px; padding: 6px 10px; pointer-events: none; z-index: 5; }
@@ -102,6 +106,8 @@ export class Rede {
       <p>Duas pessoas no mesmo avião, cada uma no seu computador. Quem está com os comandos pilota; o outro vê tudo,
       conversa pelo interfone e pode pegar os comandos a qualquer hora. Nada passa por servidor: o convite vai
       pelo WhatsApp (ou onde quiser). Você começa pilotando.</p>
+      ${pageLocal() ? `<p class="aviso">O jogo está aberto só neste computador ou rede (${location.host || 'arquivo local'}): o link do
+      convite não abre para quem está longe. Abra o jogo pelo endereço publicado (ex.: GitHub Pages) e convide de lá.</p>` : ''}
       <div class="row"><label>Meu banco</label>${seg('seat', [[0, 'esquerdo'], [1, 'direito']])}</div>
       <div class="row"><button class="go" data-a="mk">Criar convite</button><span class="st"></span></div>
       <div data-step2 hidden>
